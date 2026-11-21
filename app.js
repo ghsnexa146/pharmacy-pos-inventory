@@ -5,18 +5,27 @@ const DB_KEYS = {
   ORDERS: 'retailer_purchase_orders',
   INV_SEQ: 'retailer_invoice_seq',
   SHEET_URL: 'retailer_sheet_url',
-  PIN: 'retailer_app_pin'
+  PIN: 'retailer_app_pin',
+  THEME: 'retailer_app_theme'
 };
 
 let cart = [];
 let currentStockFilter = 'all';
+let activeTabName = 'home';
 
 document.addEventListener('DOMContentLoaded', () => {
+  // 1. Apply Saved Theme
+  const savedTheme = localStorage.getItem(DB_KEYS.THEME) || 'colorful';
+  setAppTheme(savedTheme, false);
+
+  // 2. Display Current Date
   const dateEl = document.getElementById('current-date-display');
   if (dateEl) {
     dateEl.innerText = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   }
 
+  // 3. Check Profile & Initialize App before hiding Splash Screen (Prevents Dashboard Jump)
+  let hasValidProfile = false;
   try {
     const rawProfile = localStorage.getItem(DB_KEYS.PROFILE);
     if (rawProfile) {
@@ -25,7 +34,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!profile.addr1 && profile.address) profile.addr1 = profile.address;
         if (!profile.district) profile.district = 'Sepahijala';
         if (!profile.state) profile.state = 'Tripura';
+        if (!profile.profileCode) {
+          profile.profileCode = generateProfileCode(profile.bizName, profile.phone);
+          localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(profile));
+        }
         loadMainApp(profile);
+        hasValidProfile = true;
       }
     }
   } catch (err) {
@@ -33,8 +47,220 @@ document.addEventListener('DOMContentLoaded', () => {
     localStorage.removeItem(DB_KEYS.PROFILE);
   }
 
+  if (!hasValidProfile) {
+    document.getElementById('setup-screen').classList.add('active');
+  }
+
+  // 4. Smoothly Dismiss Splash Screen
+  setTimeout(() => {
+    const splash = document.getElementById('splash-screen');
+    if (splash) {
+      splash.classList.add('fade-out');
+      setTimeout(() => splash.remove(), 480);
+    }
+  }, 1100);
+
   setupSmartExpiryValidation();
+  setupBackNavigationHandler();
 });
+
+/* ==================== TOAST HELPER ==================== */
+function showToast(msg) {
+  const toast = document.getElementById('toast-msg');
+  if (!toast) return;
+  toast.innerText = msg;
+  toast.classList.add('show');
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(() => toast.classList.remove('show'), 2500);
+}
+
+/* ==================== ANDROID BACK BUTTON HANDLER ==================== */
+function setupBackNavigationHandler() {
+  window.history.pushState({ appState: 'root' }, '');
+
+  window.addEventListener('popstate', () => {
+    const stockModal = document.getElementById('stock-modal');
+    const billsModal = document.getElementById('saved-bills-modal');
+
+    // Priority 1: Close open modals first
+    if (stockModal && stockModal.classList.contains('active')) {
+      closeAddStockModal();
+      window.history.pushState({ appState: 'root' }, '');
+      return;
+    }
+    if (billsModal && billsModal.classList.contains('active')) {
+      closeSavedBillsModal();
+      window.history.pushState({ appState: 'root' }, '');
+      return;
+    }
+
+    // Priority 2: Return to Dashboard if on another tab
+    if (activeTabName !== 'home') {
+      switchTab('home');
+      window.history.pushState({ appState: 'root' }, '');
+      return;
+    }
+  });
+}
+
+/* ==================== THEME SWITCHER ==================== */
+function setAppTheme(themeName, notify = true) {
+  document.documentElement.setAttribute('data-theme', themeName);
+  localStorage.setItem(DB_KEYS.THEME, themeName);
+
+  document.querySelectorAll('.theme-option-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.themeVal === themeName);
+  });
+
+  if (notify) showToast(`Theme changed to ${themeName.toUpperCase()}`);
+}
+
+/* ==================== PROFILE CODE & QR GENERATOR ==================== */
+function generateProfileCode(bizName, phone) {
+  const cleanPrefix = (bizName || 'PHM').replace(/[^A-Za-z]/g, '').toUpperCase().slice(0, 3).padEnd(3, 'X');
+  const phoneTail = (phone || '0000').slice(-4);
+  const rand = Math.floor(10 + Math.random() * 89);
+  return `${cleanPrefix}-${phoneTail}${rand}`;
+}
+
+function buildCompactSyncPayload(profile) {
+  const minimal = {
+    c: profile.profileCode,
+    b: profile.bizName,
+    o: profile.ownerName,
+    g: profile.gst || '',
+    d: profile.dlNo || '',
+    p: profile.phone,
+    w: profile.whatsapp || profile.phone,
+    e: profile.email || '',
+    a1: profile.addr1,
+    a2: profile.addr2 || '',
+    ct: profile.city,
+    ds: profile.district,
+    pn: profile.pin,
+    u: localStorage.getItem(DB_KEYS.SHEET_URL) || ''
+  };
+  return 'PHMKEY:' + btoa(unescape(encodeURIComponent(JSON.stringify(minimal))));
+}
+
+function renderProfileQR(profile) {
+  const codeEl = document.getElementById('display-profile-code');
+  const qrBox = document.getElementById('profile-qr-container');
+  if (codeEl) codeEl.innerText = profile.profileCode || 'PHM-000000';
+  if (!qrBox) return;
+
+  qrBox.innerHTML = '';
+  const syncKey = buildCompactSyncPayload(profile);
+  if (typeof QRCode !== 'undefined') {
+    new QRCode(qrBox, {
+      text: syncKey,
+      width: 140,
+      height: 140,
+      colorDark: '#0f172a',
+      colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.M
+    });
+  }
+}
+
+function copyProfileCode() {
+  const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
+  const syncKey = buildCompactSyncPayload(profile);
+  navigator.clipboard?.writeText(syncKey);
+  showToast('Setup Sync Key copied! Paste on new device.');
+}
+
+function shareProfileCodeWA() {
+  const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
+  const syncKey = buildCompactSyncPayload(profile);
+  const msg = encodeURIComponent(
+    `*${profile.bizName} - Multi-Device Setup Key*\n` +
+    `Profile ID: *${profile.profileCode}*\n\n` +
+    `Copy the key below and paste it in "Continue Existing" on your new mobile:\n\n` +
+    `${syncKey}`
+  );
+  window.open(`https://wa.me/?text=${msg}`, '_blank');
+}
+
+/* ==================== ONBOARDING & RECOVERY ==================== */
+function switchOnboardingMode(mode) {
+  const newForm = document.getElementById('setup-form');
+  const restoreBox = document.getElementById('restore-code-box');
+  const btnNew = document.getElementById('onb-btn-new');
+  const btnRes = document.getElementById('onb-btn-restore');
+
+  if (mode === 'new') {
+    newForm.style.display = 'block';
+    restoreBox.style.display = 'none';
+    btnNew.classList.add('active');
+    btnRes.classList.remove('active');
+  } else {
+    newForm.style.display = 'none';
+    restoreBox.style.display = 'block';
+    btnNew.classList.remove('active');
+    btnRes.classList.add('active');
+  }
+}
+
+function handleCodeRecovery() {
+  const rawInput = document.getElementById('recover-profile-code').value.trim();
+  const manualSheetUrl = document.getElementById('recover-sheet-url').value.trim();
+
+  if (!rawInput) return alert('Please enter your Profile Code or Setup Sync Key.');
+
+  try {
+    if (rawInput.toUpperCase().startsWith('PHMKEY:')) {
+      const base64Part = rawInput.substring(7).trim();
+      const decoded = JSON.parse(decodeURIComponent(escape(atob(base64Part))));
+      const profile = {
+        profileCode: decoded.c,
+        bizName: decoded.b,
+        ownerName: decoded.o,
+        gst: decoded.g || '',
+        dlNo: decoded.d || '',
+        phone: decoded.p,
+        whatsapp: decoded.w || decoded.p,
+        email: decoded.e || '',
+        addr1: decoded.a1,
+        addr2: decoded.a2 || '',
+        city: decoded.ct,
+        district: decoded.ds || 'Sepahijala',
+        state: 'Tripura',
+        pin: decoded.pn
+      };
+      localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(profile));
+      const finalUrl = manualSheetUrl || decoded.u || '';
+      if (finalUrl) localStorage.setItem(DB_KEYS.SHEET_URL, finalUrl);
+      if (!localStorage.getItem(DB_KEYS.INV_SEQ)) localStorage.setItem(DB_KEYS.INV_SEQ, 1);
+
+      loadMainApp(profile);
+      showToast('Store profile restored successfully!');
+    } else {
+      // Short Profile Code fallback
+      const cleanCode = rawInput.toUpperCase();
+      const profile = {
+        profileCode: cleanCode,
+        bizName: 'Restored Pharmacy (' + cleanCode + ')',
+        ownerName: 'Admin',
+        phone: '',
+        whatsapp: '',
+        addr1: 'Tripura',
+        city: 'Sonamura',
+        district: 'Sepahijala',
+        state: 'Tripura',
+        pin: '799131'
+      };
+      localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(profile));
+      if (manualSheetUrl) localStorage.setItem(DB_KEYS.SHEET_URL, manualSheetUrl);
+      if (!localStorage.getItem(DB_KEYS.INV_SEQ)) localStorage.setItem(DB_KEYS.INV_SEQ, 1);
+
+      loadMainApp(profile);
+      showToast('Profile ID linked! Update details in More tab if needed.');
+    }
+  } catch (err) {
+    alert('Invalid Profile Code / Sync Key. Please copy the full key from More > Multi-Device Profile Code.');
+  }
+}
 
 function toggleAccordion(button) {
   button.parentElement.classList.toggle('active');
@@ -85,6 +311,7 @@ function handleInitialSetup(e) {
   const city = document.getElementById('reg-city').value.trim();
   const district = document.getElementById('reg-district').value;
   const pin = document.getElementById('reg-pin').value.trim();
+  const sheetUrl = (document.getElementById('reg-sheet-url').value || '').trim();
 
   if (!bizName || !ownerName || !phone || !addr1 || !city || !district || !pin) {
     alert('Please fill all required (*) fields and select a District.');
@@ -92,6 +319,7 @@ function handleInitialSetup(e) {
   }
 
   const profile = {
+    profileCode: generateProfileCode(bizName, phone),
     bizName: bizName,
     ownerName: ownerName,
     gst: (document.getElementById('reg-gst').value || '').trim().toUpperCase(),
@@ -108,6 +336,7 @@ function handleInitialSetup(e) {
   };
 
   localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(profile));
+  if (sheetUrl) localStorage.setItem(DB_KEYS.SHEET_URL, sheetUrl);
   if (!localStorage.getItem(DB_KEYS.INV_SEQ)) {
     localStorage.setItem(DB_KEYS.INV_SEQ, 1);
   }
@@ -154,6 +383,7 @@ function loadMainApp(profile) {
   document.getElementById('edit-pin').value = profile.pin || '';
   document.getElementById('sheet-api-url').value = localStorage.getItem(DB_KEYS.SHEET_URL) || '';
 
+  renderProfileQR(profile);
   updateNextInvPreview();
   refreshDashboard();
   renderStockList();
@@ -163,6 +393,7 @@ function loadMainApp(profile) {
 }
 
 function switchTab(tabName) {
+  activeTabName = tabName;
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   document.querySelector('.center-fab').classList.remove('active');
@@ -180,6 +411,7 @@ function switchTab(tabName) {
 
   if (tabName === 'stock') renderStockList();
   if (tabName === 'orders') renderOrdersList();
+  window.scrollTo({ top: 0, behavior: 'instant' });
 }
 
 function openExpiringTab() {
@@ -299,7 +531,8 @@ document.getElementById('add-stock-form').addEventListener('submit', (e) => {
   renderStockList();
   refreshDashboard();
   populateBillingDropdown();
-  syncWithCloud();
+  showToast('New medicine batch added!');
+  syncWithCloud(false); // Silent sync without popup
 });
 
 document.getElementById('restock-form').addEventListener('submit', (e) => {
@@ -328,7 +561,8 @@ document.getElementById('restock-form').addEventListener('submit', (e) => {
   renderStockList();
   refreshDashboard();
   populateBillingDropdown();
-  alert('Stock quantity increased successfully!');
+  showToast('Stock quantity increased!');
+  syncWithCloud(false); // Silent sync
 });
 
 function setStockFilter(filter, btnEl) {
@@ -391,8 +625,8 @@ function renderStockList() {
       <div class="item-card">
         <div>
           <strong style="font-size:15px;">${item.name}</strong>
-          <div style="font-size:11px; color:#475569; margin-top:2px;">Mfg: <b>${item.mfg || 'N/A'}</b> • 1 Pack = ${item.unitPerPack} Pcs</div>
-          <div style="font-size:12px; color:#64748b; margin-top:2px;">Batch: <b>${item.batch}</b> | Exp: <b>${item.expiry}</b> | GST: ${item.gst}%</div>
+          <div style="font-size:11px; color:var(--muted); margin-top:2px;">Mfg: <b>${item.mfg || 'N/A'}</b> • 1 Pack = ${item.unitPerPack} Pcs</div>
+          <div style="font-size:12px; color:var(--muted); margin-top:2px;">Batch: <b>${item.batch}</b> | Exp: <b>${item.expiry}</b> | GST: ${item.gst}%</div>
           <div>
             <span class="qty-pill-clear ${totalUnits <= 0 ? 'out' : ''}">
               <i class="fa-solid fa-box"></i> Available: ${qtyText}
@@ -405,9 +639,9 @@ function renderStockList() {
           </div>
         </div>
         <div style="text-align:right;">
-          <strong style="font-size:16px; color:#0f172a;">₹${item.mrp.toFixed(2)}</strong>
-          <div style="font-size:10px; color:#64748b;">Per Pack</div>
-          <div style="font-size:11px; color:#64748b; margin-top:4px;">Pur: ₹${item.purchaseRate.toFixed(2)}</div>
+          <strong style="font-size:16px;">₹${item.mrp.toFixed(2)}</strong>
+          <div style="font-size:10px; color:var(--muted);">Per Pack</div>
+          <div style="font-size:11px; color:var(--muted); margin-top:4px;">Pur: ₹${item.purchaseRate.toFixed(2)}</div>
         </div>
       </div>
     `;
@@ -445,6 +679,7 @@ function addMedicineOrder() {
   document.getElementById('order-med-mfg').value = '';
   document.getElementById('order-med-qty').value = '';
   renderOrdersList();
+  showToast('Added to purchase order list');
 }
 
 function renderOrdersList() {
@@ -461,7 +696,7 @@ function renderOrdersList() {
     <div class="item-card">
       <div>
         <strong style="font-size:15px;">${o.name}</strong>
-        <div style="font-size:12px; color:#64748b; margin-top:2px;">Mfg: <b>${o.mfg}</b> • Agency: ${o.supplier}</div>
+        <div style="font-size:12px; color:var(--muted); margin-top:2px;">Mfg: <b>${o.mfg}</b> • Agency: ${o.supplier}</div>
         <span class="status-badge badge-soon">Order Qty: ${o.qty}</span>
       </div>
       <button onclick="deleteOrderItem(${idx})" style="background:#fee2e2; color:#ef4444; border:none; width:32px; height:32px; border-radius:10px; cursor:pointer;">
@@ -615,7 +850,7 @@ function renderBillCart() {
       <div>
         <strong style="font-size:14px;">${c.name}</strong>
         <span style="background:#dbeafe; color:#1d4ed8; font-weight:700; font-size:11px; padding:2px 7px; border-radius:6px; margin-left:4px;">${c.qty} ${c.unitLabel}</span>
-        <div style="font-size:11px; color:#64748b; margin-top:3px;">Batch: ${c.batch} • Exp: ${c.expiry} • Rate: ₹${c.rateApplied.toFixed(2)}/${c.unitType === 'pack' ? 'Pack' : 'Pc'}</div>
+        <div style="font-size:11px; color:var(--muted); margin-top:3px;">Batch: ${c.batch} • Exp: ${c.expiry} • Rate: ₹${c.rateApplied.toFixed(2)}/${c.unitType === 'pack' ? 'Pack' : 'Pc'}</div>
       </div>
       <div style="display:flex; align-items:center; gap:10px;">
         <strong style="font-size:15px;">₹${c.total.toFixed(2)}</strong>
@@ -650,18 +885,19 @@ function deductSoldStock(soldItems) {
   localStorage.setItem(DB_KEYS.STOCK, JSON.stringify(stockList));
 }
 
+/* ==================== COMPACT SINGLE-PAGE A4 INVOICE TEMPLATE ==================== */
 function buildInvoiceHTML(saleObj, profile) {
   const fullAddr = formatFullAddress(profile);
   const rowsHtml = saleObj.items.map((c, i) => `
     <tr style="border-bottom: 1px solid #e2e8f0;">
-      <td style="padding: 11px 8px; color: #475569; font-size: 12px;">${i + 1}</td>
-      <td style="padding: 11px 8px; color: #0f172a; font-size: 13px;">
+      <td style="padding: 7px 6px; color: #475569; font-size: 11px;">${i + 1}</td>
+      <td style="padding: 7px 6px; color: #0f172a; font-size: 12px;">
         <strong>${c.name}</strong>
-        <div style="font-size: 11px; color: #64748b; margin-top: 2px;">Batch: ${c.batch} | Exp: ${c.expiry} | Mfg: ${c.mfg || '-'} | GST: ${c.gst}%</div>
+        <div style="font-size: 10px; color: #64748b;">Batch: ${c.batch} | Exp: ${c.expiry} | Mfg: ${c.mfg || '-'} | GST: ${c.gst}%</div>
       </td>
-      <td style="padding: 11px 8px; text-align: right; color: #334155; font-size: 13px;">₹${(c.rateApplied || c.mrp).toFixed(2)}</td>
-      <td style="padding: 11px 8px; text-align: center; color: #0f172a; font-weight: 600; font-size: 13px;">${c.qty} ${c.unitLabel || 'Pack'}</td>
-      <td style="padding: 11px 8px; text-align: right; font-weight: 700; color: #0f172a; font-size: 13px;">₹${c.total.toFixed(2)}</td>
+      <td style="padding: 7px 6px; text-align: right; color: #334155; font-size: 12px;">₹${(c.rateApplied || c.mrp).toFixed(2)}</td>
+      <td style="padding: 7px 6px; text-align: center; color: #0f172a; font-weight: 600; font-size: 12px;">${c.qty} ${c.unitLabel || 'Pack'}</td>
+      <td style="padding: 7px 6px; text-align: right; font-weight: 700; color: #0f172a; font-size: 12px;">₹${c.total.toFixed(2)}</td>
     </tr>
   `).join('');
 
@@ -671,71 +907,69 @@ function buildInvoiceHTML(saleObj, profile) {
   const taxLabel = saleObj.gstMode === 'extra' ? 'EXTRA GST ADDED' : 'GST INCLUDED IN MRP';
 
   return `
-    <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #1e293b; padding: 34px; max-width: 780px; margin: 0 auto; background: #ffffff;">
-      <div style="text-align: right; border-bottom: 1.5px solid #e2e8f0; padding-bottom: 20px; margin-bottom: 24px;">
-        <h1 style="margin: 0 0 10px 0; font-size: 30px; font-weight: 800; letter-spacing: 1px; color: #0f172a;">INVOICE</h1>
-        <div style="font-size: 14px; font-weight: 800; color: #0f172a; text-transform: uppercase;">${profile.bizName}</div>
-        <div style="font-size: 12px; color: #475569; margin-top: 3px;">${fullAddr}</div>
-        <div style="font-size: 12px; color: #64748b; margin-top: 2px;">Phone: ${profile.phone} ${profile.email ? '• ' + profile.email : ''}</div>
-        ${profile.gst || profile.dlNo ? `<div style="font-size: 11px; color: #334155; font-weight: 600; margin-top: 3px;">${profile.gst ? 'GSTIN: ' + profile.gst : ''} ${profile.dlNo ? ' | DL No: ' + profile.dlNo : ''}</div>` : ''}
-      </div>
-
-      <div style="display: flex; justify-content: space-between; margin-bottom: 28px;">
+    <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #1e293b; padding: 14px 18px; width: 100%; max-width: 190mm; margin: 0 auto; background: #ffffff; box-sizing: border-box;">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 12px; margin-bottom: 14px;">
         <div>
-          <div style="font-size: 11px; font-weight: 700; color: #64748b; letter-spacing: 0.6px; text-transform: uppercase; margin-bottom: 5px;">BILLED TO</div>
-          <div style="font-size: 15px; font-weight: 700; color: #0f172a;">${saleObj.custName}</div>
-          <div style="font-size: 13px; color: #475569; margin-top: 3px;">Mobile: ${saleObj.custPhone || 'Walk-in Customer'}</div>
+          <div style="font-size: 18px; font-weight: 800; color: #0f172a; text-transform: uppercase;">${profile.bizName}</div>
+          <div style="font-size: 11px; color: #475569; margin-top: 2px;">${fullAddr}</div>
+          <div style="font-size: 11px; color: #64748b; margin-top: 2px;">Phone: ${profile.phone} ${profile.email ? '• ' + profile.email : ''}</div>
+          ${profile.gst || profile.dlNo ? `<div style="font-size: 10px; color: #334155; font-weight: 600; margin-top: 2px;">${profile.gst ? 'GSTIN: ' + profile.gst : ''} ${profile.dlNo ? ' | DL No: ' + profile.dlNo : ''}</div>` : ''}
         </div>
         <div style="text-align: right;">
-          <div style="margin-bottom: 10px;">
-            <div style="font-size: 11px; font-weight: 700; color: #64748b; letter-spacing: 0.6px; text-transform: uppercase;">INVOICE NUMBER</div>
-            <div style="font-size: 15px; font-weight: 800; color: #1d4ed8; margin-top: 2px;">${saleObj.invNo}</div>
-          </div>
-          <div>
-            <div style="font-size: 11px; font-weight: 700; color: #64748b; letter-spacing: 0.6px; text-transform: uppercase;">INVOICE DATE</div>
-            <div style="font-size: 13px; color: #334155; margin-top: 2px;">${saleObj.date}</div>
-          </div>
+          <h1 style="margin: 0; font-size: 22px; font-weight: 800; letter-spacing: 1px; color: #1d4ed8;">TAX INVOICE</h1>
+          <div style="font-size: 12px; font-weight: 700; color: #0f172a; margin-top: 3px;">${saleObj.invNo}</div>
+          <div style="font-size: 11px; color: #475569;">Date: ${saleObj.date}</div>
         </div>
       </div>
 
-      <table style="width: 100%; border-collapse: collapse; margin-bottom: 22px;">
+      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 12px; margin-bottom: 14px; display: flex; justify-content: space-between;">
+        <div>
+          <span style="font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase;">BILLED TO: </span>
+          <strong style="font-size: 13px; color: #0f172a;">${saleObj.custName}</strong>
+        </div>
+        <div style="font-size: 12px; color: #475569;">
+          Mobile: <strong>${saleObj.custPhone || 'Walk-in Customer'}</strong>
+        </div>
+      </div>
+
+      <table style="width: 100%; border-collapse: collapse; margin-bottom: 14px;">
         <thead>
-          <tr style="border-top: 1.5px solid #cbd5e1; border-bottom: 1.5px solid #cbd5e1; background: #f8fafc;">
-            <th style="padding: 10px 8px; text-align: left; font-size: 11px; font-weight: 700; color: #475569; text-transform: uppercase;">#</th>
-            <th style="padding: 10px 8px; text-align: left; font-size: 11px; font-weight: 700; color: #475569; text-transform: uppercase;">Medicine Description</th>
-            <th style="padding: 10px 8px; text-align: right; font-size: 11px; font-weight: 700; color: #475569; text-transform: uppercase;">Rate</th>
-            <th style="padding: 10px 8px; text-align: center; font-size: 11px; font-weight: 700; color: #475569; text-transform: uppercase;">Qty</th>
-            <th style="padding: 10px 8px; text-align: right; font-size: 11px; font-weight: 700; color: #475569; text-transform: uppercase;">Total</th>
+          <tr style="border-top: 1.5px solid #94a3b8; border-bottom: 1.5px solid #94a3b8; background: #f1f5f9;">
+            <th style="padding: 7px 6px; text-align: left; font-size: 10px; font-weight: 700; color: #334155; text-transform: uppercase;">#</th>
+            <th style="padding: 7px 6px; text-align: left; font-size: 10px; font-weight: 700; color: #334155; text-transform: uppercase;">Medicine Description</th>
+            <th style="padding: 7px 6px; text-align: right; font-size: 10px; font-weight: 700; color: #334155; text-transform: uppercase;">Rate</th>
+            <th style="padding: 7px 6px; text-align: center; font-size: 10px; font-weight: 700; color: #334155; text-transform: uppercase;">Qty</th>
+            <th style="padding: 7px 6px; text-align: right; font-size: 10px; font-weight: 700; color: #334155; text-transform: uppercase;">Total</th>
           </tr>
         </thead>
         <tbody>${rowsHtml}</tbody>
       </table>
 
-      <div style="display: flex; justify-content: flex-end; margin-bottom: 32px;">
-        <div style="width: 280px;">
-          <div style="display: flex; justify-content: space-between; padding: 5px 0; font-size: 12px; color: #64748b;">
+      <div style="display: flex; justify-content: flex-end; margin-bottom: 18px;">
+        <div style="width: 240px;">
+          <div style="display: flex; justify-content: space-between; padding: 3px 0; font-size: 11px; color: #64748b;">
             <span>SUBTOTAL</span>
             <span>₹${subtotal.toFixed(2)}</span>
           </div>
           ${discAmt > 0 ? `
-          <div style="display: flex; justify-content: space-between; padding: 5px 0; font-size: 12px; color: #10b981; font-weight: 600;">
+          <div style="display: flex; justify-content: space-between; padding: 3px 0; font-size: 11px; color: #10b981; font-weight: 600;">
             <span>DISCOUNT (${saleObj.discPct}%)</span>
             <span>- ₹${discAmt.toFixed(2)}</span>
           </div>` : ''}
-          <div style="display: flex; justify-content: space-between; padding: 5px 0; font-size: 12px; color: #64748b;">
+          <div style="display: flex; justify-content: space-between; padding: 3px 0; font-size: 11px; color: #64748b;">
             <span>${taxLabel}</span>
             <span>${saleObj.gstMode === 'extra' ? '+ ' : ''}₹${taxAmt.toFixed(2)}</span>
           </div>
-          <div style="display: flex; justify-content: space-between; padding: 12px 0 0 0; margin-top: 6px; border-top: 1.5px solid #cbd5e1; font-size: 17px; font-weight: 800; color: #0f172a;">
+          <div style="display: flex; justify-content: space-between; padding: 8px 0 0 0; margin-top: 5px; border-top: 1.5px solid #94a3b8; font-size: 15px; font-weight: 800; color: #0f172a;">
             <span>INVOICE TOTAL</span>
             <span>₹${saleObj.total.toFixed(2)}</span>
           </div>
         </div>
       </div>
 
-      <div style="border-top: 1px solid #e2e8f0; padding-top: 16px; display: flex; justify-content: space-between; align-items: flex-end; font-size: 11px; color: #64748b;">
+      <div style="border-top: 1px solid #cbd5e1; padding-top: 10px; display: flex; justify-content: space-between; align-items: flex-end; font-size: 10px; color: #64748b;">
         <div>
-          <strong style="color: #0f172a; display: block; margin-bottom: 3px;">TERMS AND CONDITIONS</strong>
+          <strong style="color: #0f172a; display: block; margin-bottom: 2px;">TERMS AND CONDITIONS</strong>
           <span>Goods once sold will not be taken back without original invoice.</span>
         </div>
         <div style="text-align: right;">
@@ -823,6 +1057,7 @@ async function generateAndShareBill(mode) {
   refreshDashboard();
   renderStockList();
   populateBillingDropdown();
+  syncWithCloud(false); // Silent background sync
 
   document.getElementById('a4-invoice-area').innerHTML = buildInvoiceHTML(newSale, profile);
 
@@ -864,11 +1099,11 @@ function renderSavedBillsList() {
     <div class="item-card">
       <div>
         <strong style="font-size:14px;">${s.custName}</strong>
-        <div style="font-size:11px; color:#64748b; margin-top:2px;"><b style="color:#1d4ed8;">${s.invNo}</b> • ${s.date}</div>
-        <div style="font-size:11px; color:#475569; margin-top:2px;">${s.items ? s.items.length : 1} Item(s) • ${s.custPhone || 'No Phone'}</div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px;"><b style="color:var(--primary);">${s.invNo}</b> • ${s.date}</div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px;">${s.items ? s.items.length : 1} Item(s) • ${s.custPhone || 'No Phone'}</div>
       </div>
       <div style="text-align:right;">
-        <strong style="font-size:15px; color:#0f172a; display:block;">₹${s.total.toFixed(2)}</strong>
+        <strong style="font-size:15px; display:block;">₹${s.total.toFixed(2)}</strong>
         <div style="display:flex; gap:6px; margin-top:6px; justify-content:flex-end;">
           <button onclick="reprintSavedBill(${idx})" class="btn-secondary sm" title="Print"><i class="fa-solid fa-print"></i></button>
           <button onclick="shareSavedBillPDF(${idx})" class="btn-whatsapp sm" style="padding:7px 10px;" title="Share PDF"><i class="fa-brands fa-whatsapp"></i></button>
@@ -950,6 +1185,10 @@ function updateBusinessProfile() {
   profile.state = 'Tripura';
   profile.pin = document.getElementById('edit-pin').value.trim();
 
+  if (!profile.profileCode) {
+    profile.profileCode = generateProfileCode(profile.bizName, profile.phone);
+  }
+
   const customNextInv = parseInt(document.getElementById('edit-next-inv').value);
   if (!isNaN(customNextInv) && customNextInv >= 1) {
     localStorage.setItem(DB_KEYS.INV_SEQ, customNextInv);
@@ -957,19 +1196,21 @@ function updateBusinessProfile() {
 
   localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(profile));
   loadMainApp(profile);
-  alert('Business profile & invoice settings updated!');
+  showToast('Business profile & invoice settings updated!');
 }
 
 function saveSheetUrl() {
   const url = document.getElementById('sheet-api-url').value.trim();
   localStorage.setItem(DB_KEYS.SHEET_URL, url);
-  alert('Google Sheet API link saved!');
+  const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
+  renderProfileQR(profile);
+  showToast('Google Sheet API link saved!');
 }
 
 function saveSecurityPin() {
   const pin = document.getElementById('app-pin').value.trim();
   localStorage.setItem(DB_KEYS.PIN, pin);
-  alert('Security PIN updated!');
+  showToast('Security PIN updated!');
 }
 
 function exportBackupJSON() {
@@ -1006,7 +1247,7 @@ function handleRestoreJSON(event) {
       if (restored.invSeq) localStorage.setItem(DB_KEYS.INV_SEQ, restored.invSeq);
       if (restored.syncUrl) localStorage.setItem(DB_KEYS.SHEET_URL, restored.syncUrl);
       loadMainApp(restored.profile || {});
-      alert('Database restored successfully from backup!');
+      showToast('Database restored successfully!');
     } catch (err) {
       alert('Invalid backup file format.');
     }
@@ -1014,19 +1255,44 @@ function handleRestoreJSON(event) {
   fileReader.readAsText(event.target.files[0]);
 }
 
-function openScanner() { alert('Camera Barcode Scanner ready.'); }
+function openScanner() { showToast('Camera Barcode Scanner ready.'); }
 
-async function syncWithCloud() {
+/* SILENT BACKGROUND SYNC (NO POPUP ALERT) */
+async function syncWithCloud(isManual = false) {
   const url = localStorage.getItem(DB_KEYS.SHEET_URL);
-  if (!url) return alert('Please save your Google Sheet Web App URL under More > Google Sheet Cloud Sync.');
+  if (!url) {
+    if (isManual) showToast('Configure Google Sheet URL in More tab first.');
+    return;
+  }
+
+  const pill = document.getElementById('sync-status-pill');
+  if (pill) {
+    pill.className = 'sync-pill syncing';
+    pill.innerHTML = '<i class="fa-solid fa-rotate fa-spin"></i> Syncing';
+  }
+
   const payload = {
     profile: JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)),
     stock: JSON.parse(localStorage.getItem(DB_KEYS.STOCK)) || [],
     sales: JSON.parse(localStorage.getItem(DB_KEYS.SALES)) || [],
     orders: JSON.parse(localStorage.getItem(DB_KEYS.ORDERS)) || []
   };
+
   try {
-    await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    alert('Synced with Google Sheet!');
-  } catch (err) { alert('Sync failed.'); }
+    await fetch(url, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (pill) {
+      pill.className = 'sync-pill done';
+      pill.innerHTML = '<i class="fa-solid fa-check"></i> Synced';
+      setTimeout(() => { pill.style.display = 'none'; }, 2500);
+    }
+    if (isManual) showToast('Synced with Google Sheet!');
+  } catch (err) {
+    if (pill) pill.style.display = 'none';
+    if (isManual) showToast('Sync failed. Check connection.');
+  }
 }
