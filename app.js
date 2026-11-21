@@ -14,17 +14,14 @@ let currentStockFilter = 'all';
 let activeTabName = 'home';
 
 document.addEventListener('DOMContentLoaded', () => {
-  // 1. Apply Saved Theme
   const savedTheme = localStorage.getItem(DB_KEYS.THEME) || 'colorful';
   setAppTheme(savedTheme, false);
 
-  // 2. Display Current Date
   const dateEl = document.getElementById('current-date-display');
   if (dateEl) {
     dateEl.innerText = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   }
 
-  // 3. Check Profile & Initialize App before hiding Splash Screen (Prevents Dashboard Jump)
   let hasValidProfile = false;
   try {
     const rawProfile = localStorage.getItem(DB_KEYS.PROFILE);
@@ -34,10 +31,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!profile.addr1 && profile.address) profile.addr1 = profile.address;
         if (!profile.district) profile.district = 'Sepahijala';
         if (!profile.state) profile.state = 'Tripura';
-        if (!profile.profileCode) {
-          profile.profileCode = generateProfileCode(profile.bizName, profile.phone);
-          localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(profile));
-        }
         loadMainApp(profile);
         hasValidProfile = true;
       }
@@ -51,7 +44,6 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('setup-screen').classList.add('active');
   }
 
-  // 4. Smoothly Dismiss Splash Screen
   setTimeout(() => {
     const splash = document.getElementById('splash-screen');
     if (splash) {
@@ -82,7 +74,6 @@ function setupBackNavigationHandler() {
     const stockModal = document.getElementById('stock-modal');
     const billsModal = document.getElementById('saved-bills-modal');
 
-    // Priority 1: Close open modals first
     if (stockModal && stockModal.classList.contains('active')) {
       closeAddStockModal();
       window.history.pushState({ appState: 'root' }, '');
@@ -94,7 +85,6 @@ function setupBackNavigationHandler() {
       return;
     }
 
-    // Priority 2: Return to Dashboard if on another tab
     if (activeTabName !== 'home') {
       switchTab('home');
       window.history.pushState({ appState: 'root' }, '');
@@ -115,38 +105,31 @@ function setAppTheme(themeName, notify = true) {
   if (notify) showToast(`Theme changed to ${themeName.toUpperCase()}`);
 }
 
-/* ==================== PROFILE CODE & QR GENERATOR ==================== */
-function generateProfileCode(bizName, phone) {
-  const cleanPrefix = (bizName || 'PHM').replace(/[^A-Za-z]/g, '').toUpperCase().slice(0, 3).padEnd(3, 'X');
-  const phoneTail = (phone || '0000').slice(-4);
-  const rand = Math.floor(10 + Math.random() * 89);
-  return `${cleanPrefix}-${phoneTail}${rand}`;
-}
-
+/* ==================== COMPACT SETUP SYNC KEY & CLEAN QR ==================== */
 function buildCompactSyncPayload(profile) {
-  const minimal = {
-    c: profile.profileCode,
-    b: profile.bizName,
-    o: profile.ownerName,
-    g: profile.gst || '',
-    d: profile.dlNo || '',
-    p: profile.phone,
-    w: profile.whatsapp || profile.phone,
-    e: profile.email || '',
-    a1: profile.addr1,
-    a2: profile.addr2 || '',
-    ct: profile.city,
-    ds: profile.district,
-    pn: profile.pin,
-    u: localStorage.getItem(DB_KEYS.SHEET_URL) || ''
-  };
-  return 'PHMKEY:' + btoa(unescape(encodeURIComponent(JSON.stringify(minimal))));
+  // Compact pipe-delimited string for low-density, clean, scannable QR code
+  const sheetUrl = localStorage.getItem(DB_KEYS.SHEET_URL) || '';
+  const fields = [
+    profile.bizName || '',
+    profile.ownerName || '',
+    profile.gst || '',
+    profile.dlNo || '',
+    profile.phone || '',
+    profile.whatsapp || profile.phone || '',
+    profile.email || '',
+    profile.addr1 || '',
+    profile.addr2 || '',
+    profile.city || '',
+    profile.district || 'Sepahijala',
+    profile.pin || '',
+    sheetUrl
+  ];
+  const packed = fields.join('|');
+  return 'PHM1:' + btoa(unescape(encodeURIComponent(packed)));
 }
 
 function renderProfileQR(profile) {
-  const codeEl = document.getElementById('display-profile-code');
   const qrBox = document.getElementById('profile-qr-container');
-  if (codeEl) codeEl.innerText = profile.profileCode || 'PHM-000000';
   if (!qrBox) return;
 
   qrBox.innerHTML = '';
@@ -154,11 +137,11 @@ function renderProfileQR(profile) {
   if (typeof QRCode !== 'undefined') {
     new QRCode(qrBox, {
       text: syncKey,
-      width: 140,
-      height: 140,
+      width: 148,
+      height: 148,
       colorDark: '#0f172a',
       colorLight: '#ffffff',
-      correctLevel: QRCode.CorrectLevel.M
+      correctLevel: QRCode.CorrectLevel.L // Low ECC = larger, cleaner, less dense blocks
     });
   }
 }
@@ -166,28 +149,38 @@ function renderProfileQR(profile) {
 function copyProfileCode() {
   const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
   const syncKey = buildCompactSyncPayload(profile);
-  navigator.clipboard?.writeText(syncKey);
-  showToast('Setup Sync Key copied! Paste on new device.');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(syncKey);
+  } else {
+    const temp = document.createElement('textarea');
+    temp.value = syncKey;
+    document.body.appendChild(temp);
+    temp.select();
+    document.execCommand('copy');
+    temp.remove();
+  }
+  showToast('Setup Sync Key copied!');
 }
 
 function shareProfileCodeWA() {
   const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
   const syncKey = buildCompactSyncPayload(profile);
   const msg = encodeURIComponent(
-    `*${profile.bizName} - Multi-Device Setup Key*\n` +
-    `Profile ID: *${profile.profileCode}*\n\n` +
+    `*${profile.bizName} - Setup Sync Key*\n\n` +
     `Copy the key below and paste it in "Continue Existing" on your new mobile:\n\n` +
     `${syncKey}`
   );
   window.open(`https://wa.me/?text=${msg}`, '_blank');
 }
 
-/* ==================== ONBOARDING & RECOVERY ==================== */
+/* ==================== ONBOARDING & STRICT RECOVERY ==================== */
 function switchOnboardingMode(mode) {
   const newForm = document.getElementById('setup-form');
   const restoreBox = document.getElementById('restore-code-box');
   const btnNew = document.getElementById('onb-btn-new');
   const btnRes = document.getElementById('onb-btn-restore');
+  const errEl = document.getElementById('recovery-error-msg');
+  if (errEl) errEl.style.display = 'none';
 
   if (mode === 'new') {
     newForm.style.display = 'block';
@@ -205,60 +198,63 @@ function switchOnboardingMode(mode) {
 function handleCodeRecovery() {
   const rawInput = document.getElementById('recover-profile-code').value.trim();
   const manualSheetUrl = document.getElementById('recover-sheet-url').value.trim();
+  const errEl = document.getElementById('recovery-error-msg');
 
-  if (!rawInput) return alert('Please enter your Profile Code or Setup Sync Key.');
+  const showRecoveryError = (msg) => {
+    if (errEl) {
+      errEl.innerText = msg;
+      errEl.style.display = 'block';
+    } else {
+      alert(msg);
+    }
+  };
+
+  if (!rawInput) {
+    showRecoveryError('Please paste a valid Setup Sync Key.');
+    return;
+  }
+
+  // Strict Validation: Reject unrecognized or fake codes without creating any dummy profile
+  if (!rawInput.startsWith('PHM1:')) {
+    showRecoveryError('Profile code not found or invalid! Only a valid Setup Sync Key (starting with PHM1:) can restore a store. Otherwise, switch to "New Profile" to register.');
+    return;
+  }
 
   try {
-    if (rawInput.toUpperCase().startsWith('PHMKEY:')) {
-      const base64Part = rawInput.substring(7).trim();
-      const decoded = JSON.parse(decodeURIComponent(escape(atob(base64Part))));
-      const profile = {
-        profileCode: decoded.c,
-        bizName: decoded.b,
-        ownerName: decoded.o,
-        gst: decoded.g || '',
-        dlNo: decoded.d || '',
-        phone: decoded.p,
-        whatsapp: decoded.w || decoded.p,
-        email: decoded.e || '',
-        addr1: decoded.a1,
-        addr2: decoded.a2 || '',
-        city: decoded.ct,
-        district: decoded.ds || 'Sepahijala',
-        state: 'Tripura',
-        pin: decoded.pn
-      };
-      localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(profile));
-      const finalUrl = manualSheetUrl || decoded.u || '';
-      if (finalUrl) localStorage.setItem(DB_KEYS.SHEET_URL, finalUrl);
-      if (!localStorage.getItem(DB_KEYS.INV_SEQ)) localStorage.setItem(DB_KEYS.INV_SEQ, 1);
+    const base64Part = rawInput.substring(5).trim();
+    const decodedStr = decodeURIComponent(escape(atob(base64Part)));
+    const parts = decodedStr.split('|');
 
-      loadMainApp(profile);
-      showToast('Store profile restored successfully!');
-    } else {
-      // Short Profile Code fallback
-      const cleanCode = rawInput.toUpperCase();
-      const profile = {
-        profileCode: cleanCode,
-        bizName: 'Restored Pharmacy (' + cleanCode + ')',
-        ownerName: 'Admin',
-        phone: '',
-        whatsapp: '',
-        addr1: 'Tripura',
-        city: 'Sonamura',
-        district: 'Sepahijala',
-        state: 'Tripura',
-        pin: '799131'
-      };
-      localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(profile));
-      if (manualSheetUrl) localStorage.setItem(DB_KEYS.SHEET_URL, manualSheetUrl);
-      if (!localStorage.getItem(DB_KEYS.INV_SEQ)) localStorage.setItem(DB_KEYS.INV_SEQ, 1);
-
-      loadMainApp(profile);
-      showToast('Profile ID linked! Update details in More tab if needed.');
+    if (parts.length < 12 || !parts[0] || !parts[1]) {
+      throw new Error('Corrupted key');
     }
+
+    const profile = {
+      bizName: parts[0],
+      ownerName: parts[1],
+      gst: parts[2] || '',
+      dlNo: parts[3] || '',
+      phone: parts[4] || '',
+      whatsapp: parts[5] || parts[4] || '',
+      email: parts[6] || '',
+      addr1: parts[7] || '',
+      addr2: parts[8] || '',
+      city: parts[9] || '',
+      district: parts[10] || 'Sepahijala',
+      state: 'Tripura',
+      pin: parts[11] || ''
+    };
+
+    localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(profile));
+    const finalUrl = manualSheetUrl || parts[12] || '';
+    if (finalUrl) localStorage.setItem(DB_KEYS.SHEET_URL, finalUrl);
+    if (!localStorage.getItem(DB_KEYS.INV_SEQ)) localStorage.setItem(DB_KEYS.INV_SEQ, 1);
+
+    if (errEl) errEl.style.display = 'none';
+    loadMainApp(profile);
+    showToast('Store profile restored successfully!');
   } catch (err) {
-    alert('Invalid Profile Code / Sync Key. Please copy the full key from More > Multi-Device Profile Code.');
+    showRecoveryError('Invalid or corrupted Setup Sync Key! Please copy the exact key again or create a New Profile.');
   }
 }
 
@@ -319,7 +315,6 @@ function handleInitialSetup(e) {
   }
 
   const profile = {
-    profileCode: generateProfileCode(bizName, phone),
     bizName: bizName,
     ownerName: ownerName,
     gst: (document.getElementById('reg-gst').value || '').trim().toUpperCase(),
@@ -532,7 +527,7 @@ document.getElementById('add-stock-form').addEventListener('submit', (e) => {
   refreshDashboard();
   populateBillingDropdown();
   showToast('New medicine batch added!');
-  syncWithCloud(false); // Silent sync without popup
+  syncWithCloud(false);
 });
 
 document.getElementById('restock-form').addEventListener('submit', (e) => {
@@ -562,7 +557,7 @@ document.getElementById('restock-form').addEventListener('submit', (e) => {
   refreshDashboard();
   populateBillingDropdown();
   showToast('Stock quantity increased!');
-  syncWithCloud(false); // Silent sync
+  syncWithCloud(false);
 });
 
 function setStockFilter(filter, btnEl) {
@@ -680,6 +675,7 @@ function addMedicineOrder() {
   document.getElementById('order-med-qty').value = '';
   renderOrdersList();
   showToast('Added to purchase order list');
+  syncWithCloud(false);
 }
 
 function renderOrdersList() {
@@ -1057,7 +1053,7 @@ async function generateAndShareBill(mode) {
   refreshDashboard();
   renderStockList();
   populateBillingDropdown();
-  syncWithCloud(false); // Silent background sync
+  syncWithCloud(false);
 
   document.getElementById('a4-invoice-area').innerHTML = buildInvoiceHTML(newSale, profile);
 
@@ -1185,10 +1181,6 @@ function updateBusinessProfile() {
   profile.state = 'Tripura';
   profile.pin = document.getElementById('edit-pin').value.trim();
 
-  if (!profile.profileCode) {
-    profile.profileCode = generateProfileCode(profile.bizName, profile.phone);
-  }
-
   const customNextInv = parseInt(document.getElementById('edit-next-inv').value);
   if (!isNaN(customNextInv) && customNextInv >= 1) {
     localStorage.setItem(DB_KEYS.INV_SEQ, customNextInv);
@@ -1205,6 +1197,7 @@ function saveSheetUrl() {
   const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
   renderProfileQR(profile);
   showToast('Google Sheet API link saved!');
+  if (url) syncWithCloud(true);
 }
 
 function saveSecurityPin() {
@@ -1257,11 +1250,11 @@ function handleRestoreJSON(event) {
 
 function openScanner() { showToast('Camera Barcode Scanner ready.'); }
 
-/* SILENT BACKGROUND SYNC (NO POPUP ALERT) */
+/* FIXED SILENT GOOGLE SHEET CLOUD SYNC (text/plain avoids CORS preflight drop) */
 async function syncWithCloud(isManual = false) {
   const url = localStorage.getItem(DB_KEYS.SHEET_URL);
   if (!url) {
-    if (isManual) showToast('Configure Google Sheet URL in More tab first.');
+    if (isManual) showToast('Save Google Sheet Web App URL first.');
     return;
   }
 
@@ -1272,7 +1265,9 @@ async function syncWithCloud(isManual = false) {
   }
 
   const payload = {
-    profile: JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)),
+    action: 'sync_all',
+    timestamp: new Date().toISOString(),
+    profile: JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {},
     stock: JSON.parse(localStorage.getItem(DB_KEYS.STOCK)) || [],
     sales: JSON.parse(localStorage.getItem(DB_KEYS.SALES)) || [],
     orders: JSON.parse(localStorage.getItem(DB_KEYS.ORDERS)) || []
@@ -1282,17 +1277,21 @@ async function syncWithCloud(isManual = false) {
     await fetch(url, {
       method: 'POST',
       mode: 'no-cors',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8'
+      },
       body: JSON.stringify(payload)
     });
+
     if (pill) {
       pill.className = 'sync-pill done';
       pill.innerHTML = '<i class="fa-solid fa-check"></i> Synced';
       setTimeout(() => { pill.style.display = 'none'; }, 2500);
     }
-    if (isManual) showToast('Synced with Google Sheet!');
+    if (isManual) showToast('Data sent to Google Sheet!');
   } catch (err) {
+    console.error('Cloud Sync Error:', err);
     if (pill) pill.style.display = 'none';
-    if (isManual) showToast('Sync failed. Check connection.');
+    if (isManual) showToast('Sync failed. Check URL & internet.');
   }
 }

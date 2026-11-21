@@ -37,7 +37,7 @@
         <p>Create a new store profile or restore existing setup</p>
       </div>
 
-      <!-- Mode Switcher: New Profile vs Existing Profile Code -->
+      <!-- Mode Switcher: New Profile vs Existing Profile Key -->
       <div class="onboarding-tabs">
         <button type="button" class="onb-tab active" id="onb-btn-new" onclick="switchOnboardingMode('new')">
           <i class="fa-solid fa-plus-circle"></i> New Profile
@@ -131,21 +131,23 @@
         <button type="button" onclick="handleInitialSetup(event)" class="btn-primary full-width shadow mt-3 py-12">Save Details & Launch</button>
       </form>
 
-      <!-- MODE B: EXISTING PROFILE CODE / QR RECOVERY -->
+      <!-- MODE B: EXISTING PROFILE KEY RECOVERY -->
       <div id="restore-code-box" style="display:none;">
         <div class="recovery-info-box">
           <i class="fa-solid fa-qrcode"></i>
-          <p>Enter your <strong>Unique Profile Code</strong> (e.g., <code>PHM-XXXXXX</code>) or paste your Setup Sync Key from your primary device to load your store instantly.</p>
+          <p>Paste the <strong>Setup Sync Key</strong> (copied from <em>More &gt; Multi-Device Setup &amp; QR</em> on your primary mobile) to load your store profile instantly.</p>
         </div>
 
         <div class="input-floating">
-          <input type="text" id="recover-profile-code" placeholder=" " style="text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;" />
-          <label>Enter Profile Code / Sync Key *</label>
+          <input type="text" id="recover-profile-code" placeholder=" " style="font-family: monospace; font-size: 13px;" />
+          <label>Paste Setup Sync Key *</label>
         </div>
+
+        <div id="recovery-error-msg" class="error-banner" style="display:none;"></div>
 
         <div class="input-floating mt-2">
           <input type="url" id="recover-sheet-url" placeholder=" " />
-          <label>Google Sheet URL (If syncing cloud stock)</label>
+          <label>Google Sheet URL (Optional override)</label>
         </div>
 
         <button type="button" onclick="handleCodeRecovery()" class="btn-primary full-width shadow mt-3 py-12">
@@ -537,26 +539,26 @@
           </div>
         </div>
 
-        <!-- NEW Accordion 2: Multi-Device Profile Code & QR Sync -->
+        <!-- CLEANED Accordion 2: Multi-Device Setup & QR -->
         <div class="accordion-card">
           <button class="accordion-header" onclick="toggleAccordion(this)">
-            <span><i class="fa-solid fa-qrcode text-purple"></i> Multi-Device Profile Code & QR</span>
+            <span><i class="fa-solid fa-qrcode text-purple"></i> Multi-Device Setup & QR</span>
             <i class="fa-solid fa-chevron-down arrow"></i>
           </button>
           <div class="accordion-body">
-            <p class="section-subtext mb-2">Use this Unique Profile Code or scan QR on another mobile to log in directly without re-entering store details:</p>
+            <p class="section-subtext mb-2">Scan this QR or copy the Setup Sync Key to load your store profile instantly on another mobile:</p>
             <div class="profile-code-box">
-              <span class="code-label">UNIQUE STORE PROFILE CODE</span>
-              <div class="code-value-row">
-                <strong id="display-profile-code">PHM-000000</strong>
-                <button class="btn-secondary sm" onclick="copyProfileCode()"><i class="fa-regular fa-copy"></i> Copy Code</button>
-              </div>
-              <div class="qr-wrapper mt-2">
+              <div class="qr-wrapper">
                 <div id="profile-qr-container"></div>
               </div>
-              <button class="btn-whatsapp full-width mt-2" onclick="shareProfileCodeWA()">
-                <i class="fa-brands fa-whatsapp"></i> Send Setup Code to My WhatsApp
-              </button>
+              <div class="qr-action-stack mt-2">
+                <button class="btn-primary full-width" onclick="copyProfileCode()">
+                  <i class="fa-regular fa-copy"></i> Copy Setup Key
+                </button>
+                <button class="btn-whatsapp full-width" onclick="shareProfileCodeWA()">
+                  <i class="fa-brands fa-whatsapp"></i> Send Key to WhatsApp
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -568,12 +570,15 @@
             <i class="fa-solid fa-chevron-down arrow"></i>
           </button>
           <div class="accordion-body">
-            <p class="section-subtext mb-2">Configure Web App URL for silent database synchronization:</p>
+            <p class="section-subtext mb-2">Configure Apps Script Web App URL for automatic silent sync:</p>
             <div class="input-floating">
               <input type="url" id="sheet-api-url" placeholder=" " />
               <label>Apps Script Web App URL</label>
             </div>
-            <button class="btn-secondary full-width mt-2" onclick="saveSheetUrl()">Save Synchronization Link</button>
+            <div class="form-row mt-2">
+              <button class="btn-secondary full-width" onclick="saveSheetUrl()">Save Link</button>
+              <button class="btn-primary full-width" onclick="syncWithCloud(true)"><i class="fa-solid fa-rotate"></i> Sync Now</button>
+            </div>
           </div>
         </div>
 
@@ -608,7 +613,7 @@
           </div>
         </div>
 
-        <!-- NEW Accordion 6: App Theme & Appearance -->
+        <!-- Accordion 6: App Theme & Appearance -->
         <div class="accordion-card">
           <button class="accordion-header" onclick="toggleAccordion(this)">
             <span><i class="fa-solid fa-palette text-blue"></i> App Theme & Appearance</span>
