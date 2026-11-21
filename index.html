@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Retailer POS & Inventory - Ghum Heen Shopno</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+</head>
+<body>
+
+  <!-- 1. INITIAL BUSINESS REGISTRATION SCREEN -->
+  <div id="setup-screen" class="screen active">
+    <div class="setup-card">
+      <div class="brand-header">
+        <div class="logo-preview-box">
+          <img src="logo.png" alt="Logo" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+          <div class="fallback-logo"><i class="fa-solid fa-store"></i></div>
+        </div>
+        <h2>Business Registration</h2>
+        <p>Configure your pharmacy & retail terminal</p>
+      </div>
+      <form id="setup-form" onsubmit="handleInitialSetup(event); return false;">
+        <div class="input-floating">
+          <input type="text" id="reg-biz-name" placeholder=" " />
+          <label>Business Name *</label>
+        </div>
+        <div class="input-floating">
+          <input type="text" id="reg-owner-name" placeholder=" " />
+          <label>Business Owner Name *</label>
+        </div>
+        <div class="form-row">
+          <div class="input-floating">
+            <input type="text" id="reg-gst" placeholder=" " style="text-transform: uppercase;" />
+            <label>GST Number (Optional)</label>
+          </div>
+          <div class="input-floating">
+            <input type="text" id="reg-dl" placeholder=" " style="text-transform: uppercase;" />
+            <label>Drug Lic. No (Optional)</label>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="input-floating">
+            <input type="tel" id="reg-phone" maxlength="10" placeholder=" " />
+            <label>Phone Number *</label>
+          </div>
+          <div class="input-floating">
+            <input type="tel" id="reg-whatsapp" maxlength="10" placeholder=" " />
+            <label>WhatsApp Number *</label>
+          </div>
+        </div>
+        <div class="input-floating">
+          <input type="email" id="reg-email" placeholder=" " />
+          <label>Email Address (Optional)</label>
+        </div>
+
+        <div class="form-section-divider">Location Details</div>
+
+        <div class="input-floating">
+          <input type="text" id="reg-addr1" placeholder=" " />
+          <label>Address Line 1 *</label>
+        </div>
+        <div class="input-floating">
+          <input type="text" id="reg-addr2" placeholder=" " />
+          <label>Address Line 2 (Optional)</label>
+        </div>
+        <div class="form-row">
+          <div class="input-floating">
+            <input type="text" id="reg-city" placeholder=" " />
+            <label>City / Town *</label>
+          </div>
+          <div class="input-floating">
+            <select id="reg-district">
+              <option value="" disabled selected>Select District</option>
+              <option value="Dhalai">Dhalai</option>
+              <option value="Gomati">Gomati</option>
+              <option value="Khowai">Khowai</option>
+              <option value="North Tripura">North Tripura</option>
+              <option value="Sepahijala">Sepahijala</option>
+              <option value="South Tripura">South Tripura</option>
+              <option value="Unakoti">Unakoti</option>
+              <option value="West Tripura">West Tripura</option>
+            </select>
+            <label class="static-label" style="margin-bottom:2px;">District *</label>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="input-floating">
+            <input type="text" id="reg-state" value="Tripura" readonly style="background:#f8fafc; font-weight:600;" />
+            <label class="static-label" style="margin-bottom:2px;">State</label>
+          </div>
+          <div class="input-floating">
+            <input type="tel" id="reg-pin" maxlength="6" placeholder=" " />
+            <label>PIN Code *</label>
+          </div>
+        </div>
+
+        <button type="button" onclick="handleInitialSetup(event)" class="btn-primary full-width shadow mt-3 py-12">Save Details & Launch</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- 2. MAIN APPLICATION CONTAINER -->
+  <div id="main-app" class="screen">
+    <!-- Top Header -->
+    <header class="top-bar">
+      <div class="store-info">
+        <div class="logo-preview-box small">
+          <img src="logo.png" alt="Logo" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+          <div class="fallback-logo"><i class="fa-solid fa-store"></i></div>
+        </div>
+        <div>
+          <h3 id="display-biz-name">Store Name</h3>
+          <span class="badge-online"><i class="fa-solid fa-circle"></i> <span id="display-sub-loc">Terminal Active</span></span>
+        </div>
+      </div>
+      <button class="btn-icon sync-btn" onclick="syncWithCloud()" title="Sync Cloud Data">
+        <i class="fa-solid fa-cloud-arrow-up"></i>
+      </button>
+    </header>
+
+    <main class="content-area">
+
+      <!-- TAB 1: HOME DASHBOARD -->
+      <section id="tab-home" class="tab-content active">
+        <div class="welcome-banner">
+          <div>
+            <h1>Dashboard</h1>
+            <p>Welcome back, <span id="display-owner-sub">Admin</span></p>
+          </div>
+          <div class="banner-date"><i class="fa-regular fa-calendar-days"></i> <span id="current-date-display"></span></div>
+        </div>
+
+        <!-- KPI Metrics Grid -->
+        <div class="kpi-grid">
+          <div class="kpi-card" onclick="switchTab('stock')">
+            <div class="kpi-icon bg-purple"><i class="fa-solid fa-boxes-stacked"></i></div>
+            <div class="kpi-details">
+              <span class="kpi-label">Stock Value</span>
+              <h2 class="kpi-value" id="dash-stock-val">₹0.00</h2>
+            </div>
+          </div>
+          <div class="kpi-card" onclick="switchTab('stock')">
+            <div class="kpi-icon bg-blue"><i class="fa-solid fa-pills"></i></div>
+            <div class="kpi-details">
+              <span class="kpi-label">Total Medicines</span>
+              <h2 class="kpi-value" id="dash-total-items">0</h2>
+            </div>
+          </div>
+          <div class="kpi-card" onclick="openSavedBillsModal()">
+            <div class="kpi-icon bg-green"><i class="fa-solid fa-sack-dollar"></i></div>
+            <div class="kpi-details">
+              <span class="kpi-label">Net Sales</span>
+              <h2 class="kpi-value" id="dash-net-sales">₹0.00</h2>
+            </div>
+          </div>
+          <div class="kpi-card" onclick="openExpiringTab()">
+            <div class="kpi-icon bg-orange"><i class="fa-solid fa-hourglass-half"></i></div>
+            <div class="kpi-details">
+              <span class="kpi-label">Expiring Soon</span>
+              <h2 class="kpi-value warn" id="dash-expiring-count">0</h2>
+            </div>
+          </div>
+        </div>
+
+        <!-- Expiry Alert Banner -->
+        <div class="alert-strip" id="expiry-alert-bar" onclick="openExpiringTab()">
+          <div class="alert-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+          <div class="alert-text">
+            <strong id="alert-summary-title">Expiry Attention Needed</strong>
+            <span id="alert-summary-desc">Tap to review expired & soon-to-expire medicines</span>
+          </div>
+          <i class="fa-solid fa-chevron-right"></i>
+        </div>
+
+        <!-- Modern 2-Column Quick Actions -->
+        <div class="section-header">
+          <h3>Quick Operations</h3>
+        </div>
+        <div class="modern-action-grid">
+          <button class="pro-action-card green" onclick="switchTab('billing')">
+            <div class="pro-icon"><i class="fa-solid fa-file-invoice-dollar"></i></div>
+            <div class="pro-text">
+              <strong>New Bill</strong>
+              <span>Create POS invoice</span>
+            </div>
+          </button>
+          <button class="pro-action-card purple" onclick="openAddStockModal('new')">
+            <div class="pro-icon"><i class="fa-solid fa-cart-plus"></i></div>
+            <div class="pro-text">
+              <strong>Add Stock</strong>
+              <span>New or restock batch</span>
+            </div>
+          </button>
+          <button class="pro-action-card blue" onclick="switchTab('orders')">
+            <div class="pro-icon"><i class="fa-solid fa-truck-medical"></i></div>
+            <div class="pro-text">
+              <strong>Order List</strong>
+              <span>Medicines to purchase</span>
+            </div>
+          </button>
+          <button class="pro-action-card amber" onclick="openSavedBillsModal()">
+            <div class="pro-icon"><i class="fa-solid fa-clock-rotate-left"></i></div>
+            <div class="pro-text">
+              <strong>Saved Bills</strong>
+              <span>Customer invoices</span>
+            </div>
+          </button>
+        </div>
+      </section>
+
+      <!-- TAB 2: PROFESSIONAL PURCHASE ORDERS -->
+      <section id="tab-orders" class="tab-content">
+        <div class="section-header">
+          <div>
+            <h3>Purchase Orders</h3>
+            <p>Shortlist medicines for restocking</p>
+          </div>
+          <button class="btn-whatsapp sm shadow" onclick="sharePurchaseOrderWA()">
+            <i class="fa-brands fa-whatsapp"></i> Send List
+          </button>
+        </div>
+
+        <div class="pro-order-form-card">
+          <div class="order-form-top">
+            <div class="input-icon-wrap flex-grow">
+              <i class="fa-solid fa-capsules"></i>
+              <input type="text" id="order-med-name" placeholder="Medicine Name *" />
+            </div>
+          </div>
+          <div class="order-form-mid">
+            <div class="input-icon-wrap">
+              <i class="fa-solid fa-industry"></i>
+              <input type="text" id="order-med-mfg" placeholder="Company / Mfg." />
+            </div>
+            <div class="input-icon-wrap">
+              <i class="fa-solid fa-cubes"></i>
+              <input type="text" id="order-med-qty" placeholder="Qty (e.g. 10 Box) *" />
+            </div>
+          </div>
+          <div class="order-form-bot">
+            <div class="input-icon-wrap flex-grow">
+              <i class="fa-solid fa-truck"></i>
+              <input type="text" id="order-supplier" placeholder="Supplier / Agency (Optional)" />
+            </div>
+            <button class="btn-primary sm" style="height:40px; padding:0 16px;" onclick="addMedicineOrder()">
+              <i class="fa-solid fa-plus"></i> Add
+            </button>
+          </div>
+        </div>
+
+        <div class="section-header" style="margin-top:16px;">
+          <h4>Shortlisted Items (<span id="order-total-count">0</span>)</h4>
+          <button class="btn-ghost" onclick="clearAllOrders()">Clear All</button>
+        </div>
+
+        <div id="orders-list-container" class="list-container"></div>
+      </section>
+
+      <!-- TAB 3: ACCURATE PHARMACY BILLING -->
+      <section id="tab-billing" class="tab-content">
+        <div class="section-header">
+          <div>
+            <h3>POS Billing <span class="inv-badge" id="next-inv-preview">INV-0001</span></h3>
+            <p>Pack/Loose unit billing, discount & GST control</p>
+          </div>
+          <div class="row-join">
+            <button class="btn-secondary sm" onclick="openSavedBillsModal()">
+              <i class="fa-solid fa-clock-rotate-left"></i> Saved
+            </button>
+            <button class="btn-ghost" onclick="clearCart()">Reset</button>
+          </div>
+        </div>
+
+        <!-- Customer & Item Selector Card -->
+        <div class="modern-billing-box">
+          <div class="billing-cust-strip">
+            <div class="input-icon-wrap">
+              <i class="fa-regular fa-user"></i>
+              <input type="text" id="cust-name" placeholder="Customer Name" />
+            </div>
+            <div class="input-icon-wrap">
+              <i class="fa-brands fa-whatsapp"></i>
+              <input type="tel" id="cust-phone" maxlength="10" placeholder="WhatsApp No." />
+            </div>
+          </div>
+
+          <div class="billing-add-strip">
+            <label class="static-label">1. Select Medicine from Stock</label>
+            <select id="bill-product-select" class="modern-select full-width" onchange="updateSelectedStockHint()"></select>
+            <div id="selected-stock-hint" class="stock-hint-text"></div>
+
+            <div class="billing-controls-row mt-2">
+              <div style="flex:1;">
+                <label class="static-label">2. Unit Type</label>
+                <select id="bill-unit-type" class="modern-select full-width">
+                  <option value="pack">Pack / Strip</option>
+                  <option value="unit">Loose Pcs / Tablet</option>
+                </select>
+              </div>
+              <div>
+                <label class="static-label">3. Quantity</label>
+                <div class="stepper-box">
+                  <button type="button" onclick="adjustBillQty(-1)">−</button>
+                  <input type="number" id="bill-qty" value="1" min="1" />
+                  <button type="button" onclick="adjustBillQty(1)">+</button>
+                </div>
+              </div>
+              <div style="align-self:flex-end;">
+                <button class="btn-primary sm" style="height:40px; padding:0 16px;" onclick="addToBill()">
+                  <i class="fa-solid fa-plus"></i> Add
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Discount & GST Options Strip -->
+          <div class="billing-tax-disc-strip">
+            <div class="tax-disc-item">
+              <label>Discount (%)</label>
+              <input type="number" id="bill-discount-pct" value="0" min="0" max="100" step="0.5" oninput="renderBillCart()" />
+            </div>
+            <div class="tax-disc-item" style="flex:1.4;">
+              <label>GST Calculation</label>
+              <select id="bill-gst-mode" onchange="renderBillCart()">
+                <option value="included">Included in MRP</option>
+                <option value="extra">Add Extra GST (+%)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Receipt Cart Items -->
+        <div class="receipt-container" id="bill-items-list"></div>
+
+        <!-- Compact Sleek Checkout Bar -->
+        <div class="compact-checkout-bar">
+          <div class="chk-left">
+            <span class="chk-label" id="bill-breakdown-label">Payable (0 Items)</span>
+            <strong id="bill-grand-total" class="chk-amount">₹0.00</strong>
+          </div>
+          <div class="chk-right-btns">
+            <button class="btn-compact-wa" onclick="generateAndShareBill('whatsapp')" title="Share PDF on WhatsApp">
+              <i class="fa-brands fa-whatsapp"></i> <span>Share PDF</span>
+            </button>
+            <button class="btn-compact-print" onclick="generateAndShareBill('print')" title="Save & Print A4">
+              <i class="fa-solid fa-print"></i> <span>Print</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 4: CLEAR STOCK INVENTORY -->
+      <section id="tab-stock" class="tab-content">
+        <div class="section-header">
+          <div>
+            <h3>Inventory Manager</h3>
+            <p>Live stock packs, units & expiry tracker</p>
+          </div>
+          <button class="btn-primary sm shadow" onclick="openAddStockModal('new')">
+            <i class="fa-solid fa-plus"></i> Add Item
+          </button>
+        </div>
+
+        <!-- Stock Category Filter Pills -->
+        <div class="filter-pills">
+          <button class="pill active" data-filter="all" onclick="setStockFilter('all', this)">All (<span id="count-all">0</span>)</button>
+          <button class="pill" data-filter="new" onclick="setStockFilter('new', this)">New / Valid (<span id="count-new">0</span>)</button>
+          <button class="pill warn" data-filter="soon" onclick="setStockFilter('soon', this)">Expiring Soon (<span id="count-soon">0</span>)</button>
+          <button class="pill danger" data-filter="expired" onclick="setStockFilter('expired', this)">Expired (<span id="count-expired">0</span>)</button>
+        </div>
+
+        <div class="search-box-container">
+          <i class="fa-solid fa-magnifying-glass"></i>
+          <input type="text" id="stock-search" placeholder="Search medicine, mfg or batch..." onkeyup="renderStockList()" />
+        </div>
+        <div id="stock-list-container" class="list-container"></div>
+      </section>
+
+      <!-- TAB 5: MORE & SETTINGS -->
+      <section id="tab-more" class="tab-content">
+        <!-- Shop Header Banner -->
+        <div class="shop-ident-banner">
+          <div class="logo-preview-box large">
+            <img src="logo.png" alt="Logo" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+            <div class="fallback-logo"><i class="fa-solid fa-store"></i></div>
+          </div>
+          <div class="shop-ident-details">
+            <h2 id="banner-biz-name">Store Name</h2>
+            <p id="banner-owner-meta">Owner Name</p>
+            <span class="status-online-pill"><i class="fa-solid fa-shield-halved"></i> <span id="banner-loc-pill">Tripura</span></span>
+          </div>
+        </div>
+
+        <div class="section-header mt-3">
+          <h3>Terminal Configuration</h3>
+          <p>Tap any section below to expand</p>
+        </div>
+
+        <!-- Accordion 1: Business Profile & Invoice Serial -->
+        <div class="accordion-card">
+          <button class="accordion-header" onclick="toggleAccordion(this)">
+            <span><i class="fa-solid fa-store text-purple"></i> Business Profile & Invoice No.</span>
+            <i class="fa-solid fa-chevron-down arrow"></i>
+          </button>
+          <div class="accordion-body">
+            <div class="form-row">
+              <div class="input-floating">
+                <input type="text" id="edit-biz-name" placeholder=" " />
+                <label>Business Name</label>
+              </div>
+              <div class="input-floating">
+                <input type="text" id="edit-owner-name" placeholder=" " />
+                <label>Owner Name</label>
+              </div>
+            </div>
+            <div class="form-row mt-2">
+              <div class="input-floating">
+                <input type="text" id="edit-gst" placeholder=" " style="text-transform:uppercase;" />
+                <label>GST Number</label>
+              </div>
+              <div class="input-floating">
+                <input type="text" id="edit-dl" placeholder=" " style="text-transform:uppercase;" />
+                <label>Drug License No.</label>
+              </div>
+            </div>
+            <div class="form-row mt-2">
+              <div class="input-floating">
+                <input type="tel" id="edit-phone" maxlength="10" placeholder=" " />
+                <label>Phone Number</label>
+              </div>
+              <div class="input-floating">
+                <input type="tel" id="edit-whatsapp" maxlength="10" placeholder=" " />
+                <label>WhatsApp Number</label>
+              </div>
+            </div>
+            <div class="input-floating mt-2">
+              <input type="email" id="edit-email" placeholder=" " />
+              <label>Email Address</label>
+            </div>
+            <div class="input-floating mt-2">
+              <input type="text" id="edit-addr1" placeholder=" " />
+              <label>Address Line 1</label>
+            </div>
+            <div class="input-floating mt-2">
+              <input type="text" id="edit-addr2" placeholder=" " />
+              <label>Address Line 2</label>
+            </div>
+            <div class="form-row mt-2">
+              <div class="input-floating">
+                <input type="text" id="edit-city" placeholder=" " />
+                <label>City / Town</label>
+              </div>
+              <div class="input-floating">
+                <select id="edit-district">
+                  <option value="Dhalai">Dhalai</option>
+                  <option value="Gomati">Gomati</option>
+                  <option value="Khowai">Khowai</option>
+                  <option value="North Tripura">North Tripura</option>
+                  <option value="Sepahijala">Sepahijala</option>
+                  <option value="South Tripura">South Tripura</option>
+                  <option value="Unakoti">Unakoti</option>
+                  <option value="West Tripura">West Tripura</option>
+                </select>
+                <label class="static-label" style="margin-bottom:2px;">District</label>
+              </div>
+            </div>
+            <div class="form-row mt-2">
+              <div class="input-floating">
+                <input type="tel" id="edit-pin" maxlength="6" placeholder=" " />
+                <label>PIN Code</label>
+              </div>
+              <div class="input-floating">
+                <input type="number" id="edit-next-inv" min="1" placeholder=" " />
+                <label>Next Invoice Serial No.</label>
+              </div>
+            </div>
+            <button class="btn-primary full-width mt-2 shadow" onclick="updateBusinessProfile()">Save Profile Changes</button>
+          </div>
+        </div>
+
+        <!-- Accordion 2: Cloud Sync -->
+        <div class="accordion-card">
+          <button class="accordion-header" onclick="toggleAccordion(this)">
+            <span><i class="fa-solid fa-cloud text-blue"></i> Google Sheet Cloud Sync</span>
+            <i class="fa-solid fa-chevron-down arrow"></i>
+          </button>
+          <div class="accordion-body">
+            <p class="section-subtext mb-2">Configure Web App URL for database synchronization:</p>
+            <div class="input-floating">
+              <input type="url" id="sheet-api-url" placeholder=" " />
+              <label>Apps Script Web App URL</label>
+            </div>
+            <button class="btn-secondary full-width mt-2" onclick="saveSheetUrl()">Save Synchronization Link</button>
+          </div>
+        </div>
+
+        <!-- Accordion 3: Security & Staff -->
+        <div class="accordion-card">
+          <button class="accordion-header" onclick="toggleAccordion(this)">
+            <span><i class="fa-solid fa-lock text-green"></i> Terminal Security</span>
+            <i class="fa-solid fa-chevron-down arrow"></i>
+          </button>
+          <div class="accordion-body">
+            <div class="input-floating">
+              <input type="password" id="app-pin" maxlength="4" placeholder=" " />
+              <label>4-Digit App Lock PIN (Optional)</label>
+            </div>
+            <button class="btn-secondary full-width mt-2" onclick="saveSecurityPin()">Apply Security PIN</button>
+          </div>
+        </div>
+
+        <!-- Accordion 4: Offline Backup & Restore -->
+        <div class="accordion-card">
+          <button class="accordion-header" onclick="toggleAccordion(this)">
+            <span><i class="fa-solid fa-download text-orange"></i> Offline Data Backup & Restore</span>
+            <i class="fa-solid fa-chevron-down arrow"></i>
+          </button>
+          <div class="accordion-body">
+            <p class="section-subtext mb-2">Export your entire database locally as a JSON file or restore from backup:</p>
+            <div class="form-row">
+              <button class="btn-secondary full-width" onclick="exportBackupJSON()"><i class="fa-solid fa-file-arrow-down"></i> Export JSON</button>
+              <button class="btn-secondary full-width" onclick="triggerRestoreInput()"><i class="fa-solid fa-file-arrow-up"></i> Restore JSON</button>
+              <input type="file" id="restore-file-input" accept=".json" style="display:none;" onchange="handleRestoreJSON(event)" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Professional Developer Card (ঘুম হীন স্বপ্ন + icon.png) -->
+        <div class="dev-about-card">
+          <div class="dev-about-header">
+            <div class="dev-avatar">
+              <img src="icon.png" alt="Developer Icon" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+              <div class="fallback-dev-icon"><i class="fa-solid fa-code"></i></div>
+            </div>
+            <div>
+              <span class="dev-role-pill">LEAD APP DEVELOPER</span>
+              <h4>D Hossain</h4>
+              <p>ঘুম হীন স্বপ্ন • Digital Architecture & POS Solutions</p>
+            </div>
+          </div>
+          <div class="dev-action-rows">
+            <div class="dev-row">
+              <div>
+                <strong>Official WhatsApp Support</strong>
+                <span>+91 6909998882</span>
+              </div>
+              <a href="https://wa.me/916909998882" target="_blank" class="mini-btn wa"><i class="fa-brands fa-whatsapp"></i> WhatsApp</a>
+            </div>
+            <div class="dev-row">
+              <div>
+                <strong>Brand & Developer Website</strong>
+                <span>ghum-heen-shopno.online</span>
+              </div>
+              <a href="https://ghum-heen-shopno.online/" target="_blank" class="mini-btn web"><i class="fa-solid fa-arrow-up-right-from-square"></i> Visit</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- SLEEK FLOATING DOCK BOTTOM NAVIGATION / DESKTOP SIDEBAR -->
+    <nav class="bottom-nav">
+      <button class="nav-item active" data-tab="home" onclick="switchTab('home')">
+        <i class="fa-solid fa-house"></i>
+        <span>Dashboard</span>
+      </button>
+      <button class="nav-item" data-tab="orders" onclick="switchTab('orders')">
+        <i class="fa-solid fa-truck-medical"></i>
+        <span>Orders</span>
+      </button>
+      <div class="nav-center-slot">
+        <button class="center-fab" data-tab="billing" onclick="switchTab('billing')">
+          <i class="fa-solid fa-receipt"></i>
+        </button>
+        <span class="center-fab-label" id="billing-nav-label">Billing</span>
+      </div>
+      <button class="nav-item" data-tab="stock" onclick="switchTab('stock')">
+        <i class="fa-solid fa-boxes-stacked"></i>
+        <span>Inventory</span>
+      </button>
+      <button class="nav-item" data-tab="more" onclick="switchTab('more')">
+        <i class="fa-solid fa-sliders"></i>
+        <span>More</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- ADD / RESTOCK MEDICINE MODAL -->
+  <div id="stock-modal" class="modal">
+    <div class="modal-content shadow">
+      <div class="modal-header">
+        <div>
+          <h3>Manage Medicine Stock</h3>
+          <p>Add new medicine or increase existing stock</p>
+        </div>
+        <button class="close-btn" onclick="closeAddStockModal()">&times;</button>
+      </div>
+
+      <!-- Mode Switcher: New Item vs Restock Existing -->
+      <div class="modal-mode-tabs">
+        <button type="button" class="mode-tab active" id="mode-btn-new" onclick="setStockModalMode('new')">+ New Medicine</button>
+        <button type="button" class="mode-tab" id="mode-btn-restock" onclick="setStockModalMode('restock')">Restock Existing</button>
+      </div>
+
+      <!-- FORM A: ADD NEW MEDICINE BATCH -->
+      <form id="add-stock-form">
+        <div class="input-floating">
+          <div class="row-join">
+            <input type="text" id="item-name" required placeholder=" " class="flex-grow" />
+            <label>Medicine / Product Name *</label>
+            <button type="button" class="btn-secondary scan-trigger" onclick="openScanner()"><i class="fa-solid fa-qrcode"></i></button>
+          </div>
+        </div>
+
+        <div class="input-floating mt-2">
+          <input type="text" id="item-mfg" required placeholder=" " />
+          <label>Manufacturer Name (Mfg.) *</label>
+        </div>
+
+        <div class="form-row mt-2">
+          <div class="input-floating">
+            <input type="text" id="item-batch" required placeholder=" " />
+            <label>Batch No *</label>
+          </div>
+          <div class="input-floating">
+            <input type="text" id="item-expiry" placeholder="MM/YY" maxlength="5" inputmode="numeric" required placeholder=" " />
+            <label>Expiry Date (MM/YY) *</label>
+          </div>
+        </div>
+
+        <div class="form-row mt-2">
+          <div class="input-floating">
+            <input type="text" id="item-hsn" value="30049079" required placeholder=" " />
+            <label>HSN Code</label>
+          </div>
+          <div class="input-floating">
+            <select id="item-gst">
+              <option value="0">0%</option>
+              <option value="5" selected>5%</option>
+              <option value="12">12%</option>
+              <option value="18">18%</option>
+              <option value="28">28%</option>
+            </select>
+            <label class="static-label">GST Rate *</label>
+          </div>
+        </div>
+
+        <div class="form-row mt-2">
+          <div class="input-floating">
+            <input type="number" step="0.01" id="item-mrp" required placeholder=" " />
+            <label>MRP per Pack ₹ *</label>
+          </div>
+          <div class="input-floating">
+            <input type="number" step="0.01" id="item-purchase" required placeholder=" " />
+            <label>Purchase Rate ₹ *</label>
+          </div>
+        </div>
+
+        <div class="form-row mt-2">
+          <div class="input-floating">
+            <input type="number" id="item-unit-pack" value="10" min="1" required placeholder=" " />
+            <label>Tablets / Units per Pack *</label>
+          </div>
+          <div class="input-floating">
+            <input type="number" id="item-packs" placeholder="Qty" min="1" required placeholder=" " />
+            <label>Total Packs Purchased *</label>
+          </div>
+        </div>
+
+        <button type="submit" class="btn-primary full-width mt-3 shadow py-12">Save New Batch</button>
+      </form>
+
+      <!-- FORM B: RESTOCK EXISTING MEDICINE -->
+      <form id="restock-form" style="display:none;">
+        <div class="input-floating">
+          <label class="static-label">Select Existing Medicine Batch *</label>
+          <select id="restock-select" class="modern-select full-width" onchange="showRestockCurrentInfo()"></select>
+        </div>
+        <div id="restock-current-info" class="stock-hint-text mt-2"></div>
+
+        <div class="input-floating mt-2">
+          <input type="number" id="restock-add-packs" min="1" required placeholder=" " />
+          <label>Additional Packs to Add *</label>
+        </div>
+
+        <div class="form-row mt-2">
+          <div class="input-floating">
+            <input type="number" step="0.01" id="restock-new-mrp" placeholder=" " />
+            <label>Update MRP ₹ (Optional)</label>
+          </div>
+          <div class="input-floating">
+            <input type="number" step="0.01" id="restock-new-pur" placeholder=" " />
+            <label>Update Purchase ₹ (Optional)</label>
+          </div>
+        </div>
+
+        <button type="submit" class="btn-primary full-width mt-3 shadow py-12">Add Quantity to Stock</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- SAVED CUSTOMER BILLS MODAL -->
+  <div id="saved-bills-modal" class="modal">
+    <div class="modal-content shadow">
+      <div class="modal-header">
+        <div>
+          <h3>Saved Customer Bills</h3>
+          <p>Share PDF or print previous invoices</p>
+        </div>
+        <button class="close-btn" onclick="closeSavedBillsModal()">&times;</button>
+      </div>
+      <div class="search-box-container">
+        <i class="fa-solid fa-magnifying-glass"></i>
+        <input type="text" id="saved-bill-search" placeholder="Search customer or invoice no..." onkeyup="renderSavedBillsList()" />
+      </div>
+      <div id="saved-bills-container" class="list-container" style="max-height: 55vh; overflow-y: auto;"></div>
+    </div>
+  </div>
+
+  <div id="a4-invoice-area" class="print-only"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
