@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="colorful">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
@@ -7,20 +7,47 @@
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
 
-  <!-- 1. INITIAL BUSINESS REGISTRATION SCREEN -->
-  <div id="setup-screen" class="screen active">
+  <!-- 0. PROFESSIONAL SPLASH SCREEN -->
+  <div id="splash-screen">
+    <div class="splash-content">
+      <div class="splash-logo">
+        <img src="logo.png" alt="Logo" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+        <div class="fallback-logo"><i class="fa-solid fa-staff-snake"></i></div>
+      </div>
+      <h2>PharmaPOS Pro</h2>
+      <p>Smart Pharmacy & Inventory Terminal</p>
+      <div class="splash-loader"><span></span></div>
+      <div class="splash-footer">Design by <strong>D Hossain</strong> • ঘুম হীন স্বপ্ন</div>
+    </div>
+  </div>
+
+  <!-- 1. ONBOARDING / REGISTRATION & RECOVERY SCREEN -->
+  <div id="setup-screen" class="screen">
     <div class="setup-card">
       <div class="brand-header">
         <div class="logo-preview-box">
           <img src="logo.png" alt="Logo" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
           <div class="fallback-logo"><i class="fa-solid fa-store"></i></div>
         </div>
-        <h2>Business Registration</h2>
-        <p>Configure your pharmacy & retail terminal</p>
+        <h2>Pharmacy Terminal Setup</h2>
+        <p>Create a new store profile or restore existing setup</p>
       </div>
+
+      <!-- Mode Switcher: New Profile vs Existing Profile Code -->
+      <div class="onboarding-tabs">
+        <button type="button" class="onb-tab active" id="onb-btn-new" onclick="switchOnboardingMode('new')">
+          <i class="fa-solid fa-plus-circle"></i> New Profile
+        </button>
+        <button type="button" class="onb-tab" id="onb-btn-restore" onclick="switchOnboardingMode('restore')">
+          <i class="fa-solid fa-key"></i> Continue Existing
+        </button>
+      </div>
+
+      <!-- MODE A: NEW REGISTRATION FORM -->
       <form id="setup-form" onsubmit="handleInitialSetup(event); return false;">
         <div class="input-floating">
           <input type="text" id="reg-biz-name" placeholder=" " />
@@ -82,13 +109,13 @@
               <option value="Unakoti">Unakoti</option>
               <option value="West Tripura">West Tripura</option>
             </select>
-            <label class="static-label" style="margin-bottom:2px;">District *</label>
+            <label class="static-label">District *</label>
           </div>
         </div>
         <div class="form-row">
           <div class="input-floating">
-            <input type="text" id="reg-state" value="Tripura" readonly style="background:#f8fafc; font-weight:600;" />
-            <label class="static-label" style="margin-bottom:2px;">State</label>
+            <input type="text" id="reg-state" value="Tripura" readonly class="readonly-input" />
+            <label class="static-label">State</label>
           </div>
           <div class="input-floating">
             <input type="tel" id="reg-pin" maxlength="6" placeholder=" " />
@@ -96,8 +123,35 @@
           </div>
         </div>
 
+        <div class="input-floating">
+          <input type="url" id="reg-sheet-url" placeholder=" " />
+          <label>Google Sheet Apps Script URL (Optional)</label>
+        </div>
+
         <button type="button" onclick="handleInitialSetup(event)" class="btn-primary full-width shadow mt-3 py-12">Save Details & Launch</button>
       </form>
+
+      <!-- MODE B: EXISTING PROFILE CODE / QR RECOVERY -->
+      <div id="restore-code-box" style="display:none;">
+        <div class="recovery-info-box">
+          <i class="fa-solid fa-qrcode"></i>
+          <p>Enter your <strong>Unique Profile Code</strong> (e.g., <code>PHM-XXXXXX</code>) or paste your Setup Sync Key from your primary device to load your store instantly.</p>
+        </div>
+
+        <div class="input-floating">
+          <input type="text" id="recover-profile-code" placeholder=" " style="text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;" />
+          <label>Enter Profile Code / Sync Key *</label>
+        </div>
+
+        <div class="input-floating mt-2">
+          <input type="url" id="recover-sheet-url" placeholder=" " />
+          <label>Google Sheet URL (If syncing cloud stock)</label>
+        </div>
+
+        <button type="button" onclick="handleCodeRecovery()" class="btn-primary full-width shadow mt-3 py-12">
+          <i class="fa-solid fa-unlock-keyhole"></i> Verify & Restore Store
+        </button>
+      </div>
     </div>
   </div>
 
@@ -115,9 +169,12 @@
           <span class="badge-online"><i class="fa-solid fa-circle"></i> <span id="display-sub-loc">Terminal Active</span></span>
         </div>
       </div>
-      <button class="btn-icon sync-btn" onclick="syncWithCloud()" title="Sync Cloud Data">
-        <i class="fa-solid fa-cloud-arrow-up"></i>
-      </button>
+      <div class="top-actions">
+        <span id="sync-status-pill" class="sync-pill" title="Cloud Sync Status"><i class="fa-solid fa-check"></i> Synced</span>
+        <button class="btn-icon sync-btn" id="manual-sync-btn" onclick="syncWithCloud(true)" title="Sync Cloud Data">
+          <i class="fa-solid fa-cloud-arrow-up"></i>
+        </button>
+      </div>
     </header>
 
     <main class="content-area">
@@ -463,7 +520,7 @@
                   <option value="Unakoti">Unakoti</option>
                   <option value="West Tripura">West Tripura</option>
                 </select>
-                <label class="static-label" style="margin-bottom:2px;">District</label>
+                <label class="static-label">District</label>
               </div>
             </div>
             <div class="form-row mt-2">
@@ -480,14 +537,38 @@
           </div>
         </div>
 
-        <!-- Accordion 2: Cloud Sync -->
+        <!-- NEW Accordion 2: Multi-Device Profile Code & QR Sync -->
+        <div class="accordion-card">
+          <button class="accordion-header" onclick="toggleAccordion(this)">
+            <span><i class="fa-solid fa-qrcode text-purple"></i> Multi-Device Profile Code & QR</span>
+            <i class="fa-solid fa-chevron-down arrow"></i>
+          </button>
+          <div class="accordion-body">
+            <p class="section-subtext mb-2">Use this Unique Profile Code or scan QR on another mobile to log in directly without re-entering store details:</p>
+            <div class="profile-code-box">
+              <span class="code-label">UNIQUE STORE PROFILE CODE</span>
+              <div class="code-value-row">
+                <strong id="display-profile-code">PHM-000000</strong>
+                <button class="btn-secondary sm" onclick="copyProfileCode()"><i class="fa-regular fa-copy"></i> Copy Code</button>
+              </div>
+              <div class="qr-wrapper mt-2">
+                <div id="profile-qr-container"></div>
+              </div>
+              <button class="btn-whatsapp full-width mt-2" onclick="shareProfileCodeWA()">
+                <i class="fa-brands fa-whatsapp"></i> Send Setup Code to My WhatsApp
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Accordion 3: Cloud Sync -->
         <div class="accordion-card">
           <button class="accordion-header" onclick="toggleAccordion(this)">
             <span><i class="fa-solid fa-cloud text-blue"></i> Google Sheet Cloud Sync</span>
             <i class="fa-solid fa-chevron-down arrow"></i>
           </button>
           <div class="accordion-body">
-            <p class="section-subtext mb-2">Configure Web App URL for database synchronization:</p>
+            <p class="section-subtext mb-2">Configure Web App URL for silent database synchronization:</p>
             <div class="input-floating">
               <input type="url" id="sheet-api-url" placeholder=" " />
               <label>Apps Script Web App URL</label>
@@ -496,7 +577,7 @@
           </div>
         </div>
 
-        <!-- Accordion 3: Security & Staff -->
+        <!-- Accordion 4: Security & Staff -->
         <div class="accordion-card">
           <button class="accordion-header" onclick="toggleAccordion(this)">
             <span><i class="fa-solid fa-lock text-green"></i> Terminal Security</span>
@@ -511,7 +592,7 @@
           </div>
         </div>
 
-        <!-- Accordion 4: Offline Backup & Restore -->
+        <!-- Accordion 5: Offline Backup & Restore -->
         <div class="accordion-card">
           <button class="accordion-header" onclick="toggleAccordion(this)">
             <span><i class="fa-solid fa-download text-orange"></i> Offline Data Backup & Restore</span>
@@ -523,6 +604,34 @@
               <button class="btn-secondary full-width" onclick="exportBackupJSON()"><i class="fa-solid fa-file-arrow-down"></i> Export JSON</button>
               <button class="btn-secondary full-width" onclick="triggerRestoreInput()"><i class="fa-solid fa-file-arrow-up"></i> Restore JSON</button>
               <input type="file" id="restore-file-input" accept=".json" style="display:none;" onchange="handleRestoreJSON(event)" />
+            </div>
+          </div>
+        </div>
+
+        <!-- NEW Accordion 6: App Theme & Appearance -->
+        <div class="accordion-card">
+          <button class="accordion-header" onclick="toggleAccordion(this)">
+            <span><i class="fa-solid fa-palette text-blue"></i> App Theme & Appearance</span>
+            <i class="fa-solid fa-chevron-down arrow"></i>
+          </button>
+          <div class="accordion-body">
+            <p class="section-subtext mb-2">Choose your preferred interface theme:</p>
+            <div class="theme-selector-grid">
+              <button type="button" class="theme-option-btn active" data-theme-val="colorful" onclick="setAppTheme('colorful')">
+                <span class="theme-swatch swatch-colorful"></span>
+                <strong>Colorful</strong>
+                <small>Vibrant Default</small>
+              </button>
+              <button type="button" class="theme-option-btn" data-theme-val="dark" onclick="setAppTheme('dark')">
+                <span class="theme-swatch swatch-dark"></span>
+                <strong>Dark Mode</strong>
+                <small>Night Eye-Care</small>
+              </button>
+              <button type="button" class="theme-option-btn" data-theme-val="grayscale" onclick="setAppTheme('grayscale')">
+                <span class="theme-swatch swatch-gray"></span>
+                <strong>Grayscale</strong>
+                <small>Minimal No-Color</small>
+              </button>
             </div>
           </div>
         </div>
@@ -626,7 +735,7 @@
             <label>Batch No *</label>
           </div>
           <div class="input-floating">
-            <input type="text" id="item-expiry" placeholder="MM/YY" maxlength="5" inputmode="numeric" required placeholder=" " />
+            <input type="text" id="item-expiry" placeholder="MM/YY" maxlength="5" inputmode="numeric" required />
             <label>Expiry Date (MM/YY) *</label>
           </div>
         </div>
@@ -665,7 +774,7 @@
             <label>Tablets / Units per Pack *</label>
           </div>
           <div class="input-floating">
-            <input type="number" id="item-packs" placeholder="Qty" min="1" required placeholder=" " />
+            <input type="number" id="item-packs" min="1" required placeholder=" " />
             <label>Total Packs Purchased *</label>
           </div>
         </div>
@@ -720,6 +829,10 @@
     </div>
   </div>
 
+  <!-- TOAST NOTIFICATION -->
+  <div id="toast-msg" class="toast-msg"></div>
+
+  <!-- PRINTABLE A4 INVOICE CONTAINER -->
   <div id="a4-invoice-area" class="print-only"></div>
 
   <script src="app.js"></script>
