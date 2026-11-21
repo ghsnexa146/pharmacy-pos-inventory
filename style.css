@@ -81,7 +81,7 @@ body {
   border-color: var(--primary);
 }
 .input-floating label, .input-floatingtextarea label {
-  position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+  position: absolute; left: 14px; top: 45%; transform: translateY(-50%);
   color: var(--muted); font-size: 13px; pointer-events: none;
   transition: all 0.2s ease; background: var(--white); padding: 0 4px;
 }
