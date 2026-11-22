@@ -25,7 +25,7 @@
     </div>
   </div>
 
-  <!-- 1. ONBOARDING / REGISTRATION & RECOVERY SCREEN -->
+  <!-- 1. ONBOARDING / REGISTRATION & MULTI-USER LOGIN SCREEN -->
   <div id="setup-screen" class="screen">
     <div class="setup-card">
       <div class="brand-header">
@@ -34,20 +34,20 @@
           <div class="fallback-logo"><i class="fa-solid fa-store"></i></div>
         </div>
         <h2>Pharmacy Terminal Setup</h2>
-        <p>Create a new store profile or restore existing setup</p>
+        <p>Create a new store profile or login as Owner / Staff</p>
       </div>
 
-      <!-- Mode Switcher: New Profile vs Existing Profile Key -->
+      <!-- Mode Switcher: New Store vs Multi-Device / Staff Login -->
       <div class="onboarding-tabs">
         <button type="button" class="onb-tab active" id="onb-btn-new" onclick="switchOnboardingMode('new')">
-          <i class="fa-solid fa-plus-circle"></i> New Profile
+          <i class="fa-solid fa-plus-circle"></i> New Store
         </button>
         <button type="button" class="onb-tab" id="onb-btn-restore" onclick="switchOnboardingMode('restore')">
-          <i class="fa-solid fa-key"></i> Continue Existing
+          <i class="fa-solid fa-right-to-bracket"></i> Existing / Staff
         </button>
       </div>
 
-      <!-- MODE A: NEW REGISTRATION FORM -->
+      <!-- MODE A: NEW STORE REGISTRATION FORM -->
       <form id="setup-form" onsubmit="handleInitialSetup(event); return false;">
         <div class="input-floating">
           <input type="text" id="reg-biz-name" placeholder=" " />
@@ -70,7 +70,7 @@
         <div class="form-row">
           <div class="input-floating">
             <input type="tel" id="reg-phone" maxlength="10" placeholder=" " />
-            <label>Phone Number *</label>
+            <label>Owner Phone Number *</label>
           </div>
           <div class="input-floating">
             <input type="tel" id="reg-whatsapp" maxlength="10" placeholder=" " />
@@ -123,35 +123,47 @@
           </div>
         </div>
 
+        <div class="form-section-divider">GHS Cloud Sync Link (Optional)</div>
         <div class="input-floating">
-          <input type="url" id="reg-sheet-url" placeholder=" " />
-          <label>Google Sheet Apps Script URL (Optional)</label>
+          <input type="url" id="reg-cloud-url" placeholder=" " />
+          <label>GHS Cloud Database URL (Optional)</label>
         </div>
 
-        <button type="button" onclick="handleInitialSetup(event)" class="btn-primary full-width shadow mt-3 py-12">Save Details & Launch</button>
+        <button type="button" onclick="handleInitialSetup(event)" class="btn-primary full-width shadow mt-3 py-12">Create Store & Launch</button>
       </form>
 
-      <!-- MODE B: EXISTING PROFILE KEY RECOVERY -->
+      <!-- MODE B: MULTI-DEVICE OWNER / STAFF LOGIN -->
       <div id="restore-code-box" style="display:none;">
         <div class="recovery-info-box">
-          <i class="fa-solid fa-qrcode"></i>
-          <p>Paste the <strong>Setup Sync Key</strong> (copied from <em>More &gt; Multi-Device Setup &amp; QR</em> on your primary mobile) to load your store profile instantly.</p>
+          <i class="fa-solid fa-user-shield"></i>
+          <p>Enter your <strong>Unique Store ID</strong> and registered <strong>Mobile Number</strong> (Owner or Authorized Staff) to connect.</p>
         </div>
 
         <div class="input-floating">
-          <input type="text" id="recover-profile-code" placeholder=" " style="font-family: monospace; font-size: 13px;" />
-          <label>Paste Setup Sync Key *</label>
+          <input type="text" id="login-profile-id" placeholder=" " style="text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;" />
+          <label>Unique Store Profile ID (e.g. GHS-123456) *</label>
+        </div>
+
+        <div class="input-floating mt-2">
+          <input type="tel" id="login-mobile-no" maxlength="10" placeholder=" " />
+          <label>Owner or Staff Mobile Number *</label>
+        </div>
+
+        <div class="input-floating mt-2">
+          <input type="url" id="login-cloud-url" placeholder=" " />
+          <label>GHS Cloud Database URL (Required for Cloud Login)</label>
+        </div>
+
+        <div class="form-section-divider">Or Paste Quick Setup Key</div>
+        <div class="input-floating">
+          <input type="text" id="recover-profile-code" placeholder=" " style="font-family: monospace; font-size: 12px;" />
+          <label>Paste Setup Sync Key (Optional shortcut)</label>
         </div>
 
         <div id="recovery-error-msg" class="error-banner" style="display:none;"></div>
 
-        <div class="input-floating mt-2">
-          <input type="url" id="recover-sheet-url" placeholder=" " />
-          <label>Google Sheet URL (Optional override)</label>
-        </div>
-
-        <button type="button" onclick="handleCodeRecovery()" class="btn-primary full-width shadow mt-3 py-12">
-          <i class="fa-solid fa-unlock-keyhole"></i> Verify & Restore Store
+        <button type="button" id="btn-verify-login" onclick="handleMultiUserLogin()" class="btn-primary full-width shadow mt-3 py-12">
+          <i class="fa-solid fa-unlock-keyhole"></i> Verify & Login Terminal
         </button>
       </div>
     </div>
@@ -168,20 +180,23 @@
         </div>
         <div>
           <h3 id="display-biz-name">Store Name</h3>
-          <span class="badge-online"><i class="fa-solid fa-circle"></i> <span id="display-sub-loc">Terminal Active</span></span>
+          <span class="badge-online"><i class="fa-solid fa-circle"></i> <span id="display-role-badge">Admin Mode</span></span>
         </div>
       </div>
       <div class="top-actions">
-        <span id="sync-status-pill" class="sync-pill" title="Cloud Sync Status"><i class="fa-solid fa-check"></i> Synced</span>
-        <button class="btn-icon sync-btn" id="manual-sync-btn" onclick="syncWithCloud(true)" title="Sync Cloud Data">
+        <span id="sync-status-pill" class="sync-pill" title="GHS Cloud Sync Status"><i class="fa-solid fa-check"></i> Synced</span>
+        <button class="btn-icon sync-btn" id="manual-sync-btn" onclick="syncWithCloud(true)" title="Sync GHS Cloud Data">
           <i class="fa-solid fa-cloud-arrow-up"></i>
+        </button>
+        <button class="btn-icon" id="staff-logout-btn" style="display:none; color:var(--red);" onclick="logoutCurrentSession()" title="Logout Staff">
+          <i class="fa-solid fa-right-from-bracket"></i>
         </button>
       </div>
     </header>
 
     <main class="content-area">
 
-      <!-- TAB 1: HOME DASHBOARD -->
+      <!-- TAB 1: HOME DASHBOARD (ADMIN ONLY) -->
       <section id="tab-home" class="tab-content active">
         <div class="welcome-banner">
           <div>
@@ -269,7 +284,7 @@
         </div>
       </section>
 
-      <!-- TAB 2: PROFESSIONAL PURCHASE ORDERS -->
+      <!-- TAB 2: PROFESSIONAL PURCHASE ORDERS (ADMIN ONLY) -->
       <section id="tab-orders" class="tab-content">
         <div class="section-header">
           <div>
@@ -317,7 +332,7 @@
         <div id="orders-list-container" class="list-container"></div>
       </section>
 
-      <!-- TAB 3: ACCURATE PHARMACY BILLING -->
+      <!-- TAB 3: ACCURATE PHARMACY BILLING (ADMIN + STAFF) -->
       <section id="tab-billing" class="tab-content">
         <div class="section-header">
           <div>
@@ -410,7 +425,7 @@
         </div>
       </section>
 
-      <!-- TAB 4: CLEAR STOCK INVENTORY -->
+      <!-- TAB 4: CLEAR STOCK INVENTORY (ADMIN ONLY) -->
       <section id="tab-stock" class="tab-content">
         <div class="section-header">
           <div>
@@ -437,7 +452,7 @@
         <div id="stock-list-container" class="list-container"></div>
       </section>
 
-      <!-- TAB 5: MORE & SETTINGS -->
+      <!-- TAB 5: MORE & SETTINGS (ADMIN ONLY) -->
       <section id="tab-more" class="tab-content">
         <!-- Shop Header Banner -->
         <div class="shop-ident-banner">
@@ -448,7 +463,7 @@
           <div class="shop-ident-details">
             <h2 id="banner-biz-name">Store Name</h2>
             <p id="banner-owner-meta">Owner Name</p>
-            <span class="status-online-pill"><i class="fa-solid fa-shield-halved"></i> <span id="banner-loc-pill">Tripura</span></span>
+            <span class="status-online-pill"><i class="fa-solid fa-id-badge"></i> ID: <strong id="banner-profile-id">GHS-000000</strong></span>
           </div>
         </div>
 
@@ -539,65 +554,83 @@
           </div>
         </div>
 
-        <!-- CLEANED Accordion 2: Multi-Device Setup & QR -->
+        <!-- Accordion 2: Staff Access Management -->
+        <div class="accordion-card">
+          <button class="accordion-header" onclick="toggleAccordion(this)">
+            <span><i class="fa-solid fa-users-gear text-green"></i> Staff Access & Permissions</span>
+            <i class="fa-solid fa-chevron-down arrow"></i>
+          </button>
+          <div class="accordion-body">
+            <p class="section-subtext mb-2">Authorized staff can login using Store ID + their Mobile Number (POS Billing access only):</p>
+            <div class="form-row">
+              <div class="input-floating">
+                <input type="text" id="new-staff-name" placeholder=" " />
+                <label>Staff Full Name *</label>
+              </div>
+              <div class="input-floating">
+                <input type="tel" id="new-staff-phone" maxlength="10" placeholder=" " />
+                <label>10-Digit Mobile *</label>
+              </div>
+            </div>
+            <button class="btn-primary full-width mt-2" onclick="addAuthorizedStaff()">
+              <i class="fa-solid fa-user-plus"></i> Add Authorized Staff
+            </button>
+            <div id="staff-list-container" class="list-container mt-3"></div>
+          </div>
+        </div>
+
+        <!-- Accordion 3: Multi-Device Setup & QR -->
         <div class="accordion-card">
           <button class="accordion-header" onclick="toggleAccordion(this)">
             <span><i class="fa-solid fa-qrcode text-purple"></i> Multi-Device Setup & QR</span>
             <i class="fa-solid fa-chevron-down arrow"></i>
           </button>
           <div class="accordion-body">
-            <p class="section-subtext mb-2">Scan this QR or copy the Setup Sync Key to load your store profile instantly on another mobile:</p>
+            <p class="section-subtext mb-2">Use this Unique Store ID + Phone Number (or scan QR) to login on another mobile or desktop:</p>
             <div class="profile-code-box">
-              <div class="qr-wrapper">
+              <div class="unique-id-pill">
+                <span>UNIQUE STORE ID</span>
+                <strong id="display-unique-profile-id">GHS-000000</strong>
+              </div>
+              <div class="qr-wrapper mt-2">
                 <div id="profile-qr-container"></div>
               </div>
-              <div class="qr-action-stack mt-2">
+              <div class="qr-action-stack mt-3">
                 <button class="btn-primary full-width" onclick="copyProfileCode()">
                   <i class="fa-regular fa-copy"></i> Copy Setup Key
                 </button>
                 <button class="btn-whatsapp full-width" onclick="shareProfileCodeWA()">
-                  <i class="fa-brands fa-whatsapp"></i> Send Key to WhatsApp
+                  <i class="fa-brands fa-whatsapp"></i> Send Login Details to WhatsApp
                 </button>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- Accordion 3: Cloud Sync -->
+        <!-- Accordion 4: GHS Cloud Sync (Manual Configuration) -->
         <div class="accordion-card">
           <button class="accordion-header" onclick="toggleAccordion(this)">
-            <span><i class="fa-solid fa-cloud text-blue"></i> Google Sheet Cloud Sync</span>
+            <span><i class="fa-solid fa-cloud text-blue"></i> GHS Cloud Sync</span>
             <i class="fa-solid fa-chevron-down arrow"></i>
           </button>
           <div class="accordion-body">
-            <p class="section-subtext mb-2">Configure Apps Script Web App URL for automatic silent sync:</p>
+            <p class="section-subtext mb-2">Manually link your GHS Cloud Database credentials for real-time multi-device sync:</p>
             <div class="input-floating">
-              <input type="url" id="sheet-api-url" placeholder=" " />
-              <label>Apps Script Web App URL</label>
+              <input type="url" id="ghs-cloud-url" placeholder=" " />
+              <label>GHS Cloud Database URL *</label>
+            </div>
+            <div class="input-floating mt-2">
+              <input type="text" id="ghs-cloud-secret" placeholder=" " />
+              <label>Database Secret / API Key (Optional)</label>
             </div>
             <div class="form-row mt-2">
-              <button class="btn-secondary full-width" onclick="saveSheetUrl()">Save Link</button>
-              <button class="btn-primary full-width" onclick="syncWithCloud(true)"><i class="fa-solid fa-rotate"></i> Sync Now</button>
+              <button class="btn-secondary full-width" onclick="saveGHSCloudConfig()">Save & Connect</button>
+              <button class="btn-primary full-width" onclick="pullFromCloud(true)"><i class="fa-solid fa-cloud-arrow-down"></i> Pull Latest</button>
             </div>
           </div>
         </div>
 
-        <!-- Accordion 4: Security & Staff -->
-        <div class="accordion-card">
-          <button class="accordion-header" onclick="toggleAccordion(this)">
-            <span><i class="fa-solid fa-lock text-green"></i> Terminal Security</span>
-            <i class="fa-solid fa-chevron-down arrow"></i>
-          </button>
-          <div class="accordion-body">
-            <div class="input-floating">
-              <input type="password" id="app-pin" maxlength="4" placeholder=" " />
-              <label>4-Digit App Lock PIN (Optional)</label>
-            </div>
-            <button class="btn-secondary full-width mt-2" onclick="saveSecurityPin()">Apply Security PIN</button>
-          </div>
-        </div>
-
-        <!-- Accordion 5: Offline Backup & Restore -->
+        <!-- Accordion 5: Offline Backup & Restore (Fixed File Picker) -->
         <div class="accordion-card">
           <button class="accordion-header" onclick="toggleAccordion(this)">
             <span><i class="fa-solid fa-download text-orange"></i> Offline Data Backup & Restore</span>
@@ -608,7 +641,7 @@
             <div class="form-row">
               <button class="btn-secondary full-width" onclick="exportBackupJSON()"><i class="fa-solid fa-file-arrow-down"></i> Export JSON</button>
               <button class="btn-secondary full-width" onclick="triggerRestoreInput()"><i class="fa-solid fa-file-arrow-up"></i> Restore JSON</button>
-              <input type="file" id="restore-file-input" accept=".json" style="display:none;" onchange="handleRestoreJSON(event)" />
+              <input type="file" id="restore-file-input" accept="*/*" style="display:none;" onchange="handleRestoreJSON(event)" />
             </div>
           </div>
         </div>
@@ -640,6 +673,11 @@
             </div>
           </div>
         </div>
+
+        <!-- Logout / Switch Store Account -->
+        <button class="btn-danger-outline full-width mt-3" onclick="logoutCurrentSession()">
+          <i class="fa-solid fa-right-from-bracket"></i> Logout / Switch Store Profile
+        </button>
 
         <!-- Professional Developer Card (ঘুম হীন স্বপ্ন + icon.png) -->
         <div class="dev-about-card">
@@ -676,7 +714,7 @@
     </main>
 
     <!-- SLEEK FLOATING DOCK BOTTOM NAVIGATION / DESKTOP SIDEBAR -->
-    <nav class="bottom-nav">
+    <nav class="bottom-nav" id="main-bottom-nav">
       <button class="nav-item active" data-tab="home" onclick="switchTab('home')">
         <i class="fa-solid fa-house"></i>
         <span>Dashboard</span>
@@ -713,7 +751,6 @@
         <button class="close-btn" onclick="closeAddStockModal()">&times;</button>
       </div>
 
-      <!-- Mode Switcher: New Item vs Restock Existing -->
       <div class="modal-mode-tabs">
         <button type="button" class="mode-tab active" id="mode-btn-new" onclick="setStockModalMode('new')">+ New Medicine</button>
         <button type="button" class="mode-tab" id="mode-btn-restock" onclick="setStockModalMode('restock')">Restock Existing</button>

@@ -3,9 +3,10 @@ const DB_KEYS = {
   STOCK: 'retailer_stock_list',
   SALES: 'retailer_sales_list',
   ORDERS: 'retailer_purchase_orders',
+  STAFF: 'retailer_staff_list',
   INV_SEQ: 'retailer_invoice_seq',
-  SHEET_URL: 'retailer_sheet_url',
-  PIN: 'retailer_app_pin',
+  CLOUD_CFG: 'retailer_ghs_cloud_cfg',
+  SESSION: 'retailer_active_session',
   THEME: 'retailer_app_theme'
 };
 
@@ -28,9 +29,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (rawProfile) {
       const profile = JSON.parse(rawProfile);
       if (profile && profile.bizName) {
+        if (!profile.profileId) {
+          profile.profileId = generateUniqueStoreId();
+          localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(profile));
+        }
         if (!profile.addr1 && profile.address) profile.addr1 = profile.address;
         if (!profile.district) profile.district = 'Sepahijala';
         if (!profile.state) profile.state = 'Tripura';
+
         loadMainApp(profile);
         hasValidProfile = true;
       }
@@ -55,6 +61,12 @@ document.addEventListener('DOMContentLoaded', () => {
   setupSmartExpiryValidation();
   setupBackNavigationHandler();
 });
+
+/* ==================== UNIQUE STORE ID GENERATOR ==================== */
+function generateUniqueStoreId() {
+  const rand = Math.floor(100000 + Math.random() * 900000);
+  return `GHS-${rand}`;
+}
 
 /* ==================== TOAST HELPER ==================== */
 function showToast(msg) {
@@ -85,12 +97,118 @@ function setupBackNavigationHandler() {
       return;
     }
 
-    if (activeTabName !== 'home') {
+    const session = getActiveSession();
+    if (session.role === 'admin' && activeTabName !== 'home') {
       switchTab('home');
       window.history.pushState({ appState: 'root' }, '');
       return;
     }
   });
+}
+
+/* ==================== ROLE & SESSION MANAGEMENT ==================== */
+function getActiveSession() {
+  try {
+    return JSON.parse(localStorage.getItem(DB_KEYS.SESSION)) || { role: 'admin', name: 'Owner', phone: '' };
+  } catch {
+    return { role: 'admin', name: 'Owner', phone: '' };
+  }
+}
+
+function applyRolePermissions() {
+  const session = getActiveSession();
+  const roleBadge = document.getElementById('display-role-badge');
+  const staffLogoutBtn = document.getElementById('staff-logout-btn');
+
+  if (session.role === 'staff') {
+    document.body.classList.add('staff-mode');
+    if (roleBadge) {
+      roleBadge.innerText = `Staff Billing (${session.name})`;
+      roleBadge.parentElement.classList.add('staff');
+    }
+    if (staffLogoutBtn) staffLogoutBtn.style.display = 'inline-flex';
+    switchTab('billing');
+  } else {
+    document.body.classList.remove('staff-mode');
+    if (roleBadge) {
+      roleBadge.innerText = 'Admin Terminal';
+      roleBadge.parentElement.classList.remove('staff');
+    }
+    if (staffLogoutBtn) staffLogoutBtn.style.display = 'none';
+  }
+}
+
+function logoutCurrentSession() {
+  if (!confirm('Logout from this terminal session?')) return;
+  localStorage.removeItem(DB_KEYS.SESSION);
+  localStorage.removeItem(DB_KEYS.PROFILE);
+  document.body.classList.remove('staff-mode');
+  document.getElementById('main-app').style.display = 'none';
+  document.getElementById('main-app').classList.remove('active');
+  document.getElementById('setup-screen').style.display = 'flex';
+  document.getElementById('setup-screen').classList.add('active');
+  switchOnboardingMode('restore');
+}
+
+/* ==================== STAFF MANAGEMENT (ADMIN) ==================== */
+function addAuthorizedStaff() {
+  const name = document.getElementById('new-staff-name').value.trim();
+  const phone = document.getElementById('new-staff-phone').value.trim();
+
+  if (!name || phone.length < 10) {
+    alert('Enter valid Staff Name and 10-digit Mobile Number.');
+    return;
+  }
+
+  const staffList = JSON.parse(localStorage.getItem(DB_KEYS.STAFF)) || [];
+  if (staffList.some(s => s.phone === phone)) {
+    alert('This mobile number is already registered as staff.');
+    return;
+  }
+
+  staffList.push({
+    id: Date.now(),
+    name,
+    phone,
+    addedAt: new Date().toLocaleDateString('en-IN')
+  });
+
+  localStorage.setItem(DB_KEYS.STAFF, JSON.stringify(staffList));
+  document.getElementById('new-staff-name').value = '';
+  document.getElementById('new-staff-phone').value = '';
+  renderStaffList();
+  showToast('Authorized staff added!');
+  syncWithCloud(false);
+}
+
+function renderStaffList() {
+  const container = document.getElementById('staff-list-container');
+  if (!container) return;
+  const staffList = JSON.parse(localStorage.getItem(DB_KEYS.STAFF)) || [];
+
+  if (staffList.length === 0) {
+    container.innerHTML = `<p style="font-size:12px; color:var(--muted); text-align:center; padding:10px;">No staff members added yet.</p>`;
+    return;
+  }
+
+  container.innerHTML = staffList.map((st, idx) => `
+    <div class="item-card" style="padding:10px 12px;">
+      <div>
+        <strong style="font-size:14px;">${st.name}</strong>
+        <div style="font-size:12px; color:var(--muted);">+91 ${st.phone} • <span style="color:var(--green); font-weight:700;">Billing Only</span></div>
+      </div>
+      <button onclick="removeStaffMember(${idx})" style="background:#fee2e2; color:#ef4444; border:none; padding:6px 10px; border-radius:8px; font-size:11px; font-weight:700; cursor:pointer;">Remove</button>
+    </div>
+  `).join('');
+}
+
+function removeStaffMember(idx) {
+  if (!confirm('Remove this staff member? They will no longer be able to login.')) return;
+  const staffList = JSON.parse(localStorage.getItem(DB_KEYS.STAFF)) || [];
+  staffList.splice(idx, 1);
+  localStorage.setItem(DB_KEYS.STAFF, JSON.stringify(staffList));
+  renderStaffList();
+  syncWithCloud(false);
 }
 
 /* ==================== THEME SWITCHER ==================== */
@@ -107,9 +225,9 @@ function setAppTheme(themeName, notify = true) {
 
 /* ==================== COMPACT SETUP SYNC KEY & CLEAN QR ==================== */
 function buildCompactSyncPayload(profile) {
-  // Compact pipe-delimited string for low-density, clean, scannable QR code
-  const sheetUrl = localStorage.getItem(DB_KEYS.SHEET_URL) || '';
+  const cloudCfg = JSON.parse(localStorage.getItem(DB_KEYS.CLOUD_CFG)) || {};
   const fields = [
+    profile.profileId || generateUniqueStoreId(),
     profile.bizName || '',
     profile.ownerName || '',
     profile.gst || '',
@@ -122,10 +240,11 @@ function buildCompactSyncPayload(profile) {
     profile.city || '',
     profile.district || 'Sepahijala',
     profile.pin || '',
-    sheetUrl
+    cloudCfg.url || '',
+    cloudCfg.secret || ''
   ];
   const packed = fields.join('|');
-  return 'PHM1:' + btoa(unescape(encodeURIComponent(packed)));
+  return 'GHS1:' + btoa(unescape(encodeURIComponent(packed)));
 }
 
 function renderProfileQR(profile) {
@@ -141,7 +260,7 @@ function renderProfileQR(profile) {
       height: 148,
       colorDark: '#0f172a',
       colorLight: '#ffffff',
-      correctLevel: QRCode.CorrectLevel.L // Low ECC = larger, cleaner, less dense blocks
+      correctLevel: QRCode.CorrectLevel.L
     });
   }
 }
@@ -164,16 +283,19 @@ function copyProfileCode() {
 
 function shareProfileCodeWA() {
   const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
+  const cloudCfg = JSON.parse(localStorage.getItem(DB_KEYS.CLOUD_CFG)) || {};
   const syncKey = buildCompactSyncPayload(profile);
   const msg = encodeURIComponent(
-    `*${profile.bizName} - Setup Sync Key*\n\n` +
-    `Copy the key below and paste it in "Continue Existing" on your new mobile:\n\n` +
-    `${syncKey}`
+    `*${profile.bizName} - Multi-Device & Staff Login*\n\n` +
+    `• *Store Profile ID:* ${profile.profileId}\n` +
+    `• *Owner Mobile:* ${profile.phone}\n` +
+    (cloudCfg.url ? `• *GHS Cloud URL:* ${cloudCfg.url}\n\n` : '\n') +
+    `Or paste this Quick Setup Key:\n${syncKey}`
   );
   window.open(`https://wa.me/?text=${msg}`, '_blank');
 }
 
-/* ==================== ONBOARDING & STRICT RECOVERY ==================== */
+/* ==================== MULTI-USER LOGIN (OWNER / STAFF) ==================== */
 function switchOnboardingMode(mode) {
   const newForm = document.getElementById('setup-form');
   const restoreBox = document.getElementById('restore-code-box');
@@ -195,66 +317,150 @@ function switchOnboardingMode(mode) {
   }
 }
 
-function handleCodeRecovery() {
-  const rawInput = document.getElementById('recover-profile-code').value.trim();
-  const manualSheetUrl = document.getElementById('recover-sheet-url').value.trim();
+function normalizeCloudBaseUrl(rawUrl) {
+  let clean = rawUrl.trim();
+  if (clean.endsWith('/')) clean = clean.slice(0, -1);
+  if (clean.endsWith('.json')) clean = clean.slice(0, -5);
+  return clean;
+}
+
+async function handleMultiUserLogin() {
+  const profileId = document.getElementById('login-profile-id').value.trim().toUpperCase();
+  const mobileNo = document.getElementById('login-mobile-no').value.trim();
+  const cloudUrlInput = document.getElementById('login-cloud-url').value.trim();
+  const setupKeyInput = document.getElementById('recover-profile-code').value.trim();
   const errEl = document.getElementById('recovery-error-msg');
+  const btn = document.getElementById('btn-verify-login');
 
-  const showRecoveryError = (msg) => {
-    if (errEl) {
-      errEl.innerText = msg;
-      errEl.style.display = 'block';
-    } else {
-      alert(msg);
-    }
+  const showError = (msg) => {
+    errEl.innerText = msg;
+    errEl.style.display = 'block';
   };
+  errEl.style.display = 'none';
 
-  if (!rawInput) {
-    showRecoveryError('Please paste a valid Setup Sync Key.');
-    return;
+  // Option 1: Quick Setup Key Shortcut
+  if (setupKeyInput) {
+    if (!setupKeyInput.startsWith('GHS1:')) {
+      return showError('Invalid Setup Sync Key! Must start with GHS1:');
+    }
+    try {
+      const base64Part = setupKeyInput.substring(5).trim();
+      const parts = decodeURIComponent(escape(atob(base64Part))).split('|');
+      if (parts.length < 13 || !parts[1]) throw new Error('Invalid key');
+
+      const profile = {
+        profileId: parts[0],
+        bizName: parts[1],
+        ownerName: parts[2],
+        gst: parts[3] || '',
+        dlNo: parts[4] || '',
+        phone: parts[5] || '',
+        whatsapp: parts[6] || parts[5] || '',
+        email: parts[7] || '',
+        addr1: parts[8] || '',
+        addr2: parts[9] || '',
+        city: parts[10] || '',
+        district: parts[11] || 'Sepahijala',
+        state: 'Tripura',
+        pin: parts[12] || ''
+      };
+
+      const finalUrl = cloudUrlInput || parts[13] || '';
+      const finalSecret = parts[14] || '';
+      if (finalUrl) {
+        localStorage.setItem(DB_KEYS.CLOUD_CFG, JSON.stringify({ url: finalUrl, secret: finalSecret }));
+      }
+      localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(profile));
+      localStorage.setItem(DB_KEYS.SESSION, JSON.stringify({ role: 'admin', name: profile.ownerName, phone: profile.phone }));
+      if (!localStorage.getItem(DB_KEYS.INV_SEQ)) localStorage.setItem(DB_KEYS.INV_SEQ, 1);
+
+      if (finalUrl) await pullFromCloud(false, profile.profileId, finalUrl, finalSecret);
+      loadMainApp(profile);
+      showToast('Admin profile restored & synced!');
+      return;
+    } catch {
+      return showError('Corrupted Setup Sync Key. Please verify and try again.');
+    }
   }
 
-  // Strict Validation: Reject unrecognized or fake codes without creating any dummy profile
-  if (!rawInput.startsWith('PHM1:')) {
-    showRecoveryError('Profile code not found or invalid! Only a valid Setup Sync Key (starting with PHM1:) can restore a store. Otherwise, switch to "New Profile" to register.');
-    return;
+  // Option 2: Unique Store ID + Owner/Staff Mobile Number
+  if (!profileId || !mobileNo) {
+    return showError('Please enter both Unique Store Profile ID and Mobile Number.');
   }
+
+  // Check if local profile already matches
+  const localProfile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE) || 'null');
+  const savedCloudCfg = JSON.parse(localStorage.getItem(DB_KEYS.CLOUD_CFG) || '{}');
+  const targetUrl = cloudUrlInput || savedCloudCfg.url || '';
+
+  if (!targetUrl && (!localProfile || localProfile.profileId !== profileId)) {
+    return showError('Please provide the GHS Cloud Database URL to fetch this store profile from the cloud.');
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Verifying Account...';
 
   try {
-    const base64Part = rawInput.substring(5).trim();
-    const decodedStr = decodeURIComponent(escape(atob(base64Part)));
-    const parts = decodedStr.split('|');
+    let storeData = null;
 
-    if (parts.length < 12 || !parts[0] || !parts[1]) {
-      throw new Error('Corrupted key');
+    if (targetUrl) {
+      const baseUrl = normalizeCloudBaseUrl(targetUrl);
+      const authParam = savedCloudCfg.secret ? `?auth=${encodeURIComponent(savedCloudCfg.secret)}` : '';
+      const res = await fetch(`${baseUrl}/stores/${encodeURIComponent(profileId)}.json${authParam}`);
+      if (!res.ok) throw new Error('Network error');
+      storeData = await res.json();
+    } else if (localProfile && localProfile.profileId === profileId) {
+      storeData = {
+        profile: localProfile,
+        staff: JSON.parse(localStorage.getItem(DB_KEYS.STAFF) || '[]')
+      };
     }
 
-    const profile = {
-      bizName: parts[0],
-      ownerName: parts[1],
-      gst: parts[2] || '',
-      dlNo: parts[3] || '',
-      phone: parts[4] || '',
-      whatsapp: parts[5] || parts[4] || '',
-      email: parts[6] || '',
-      addr1: parts[7] || '',
-      addr2: parts[8] || '',
-      city: parts[9] || '',
-      district: parts[10] || 'Sepahijala',
-      state: 'Tripura',
-      pin: parts[11] || ''
-    };
+    if (!storeData || !storeData.profile) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-unlock-keyhole"></i> Verify & Login Terminal';
+      return showError('Store Profile ID not found! Please check the ID or create a New Store.');
+    }
 
-    localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(profile));
-    const finalUrl = manualSheetUrl || parts[12] || '';
-    if (finalUrl) localStorage.setItem(DB_KEYS.SHEET_URL, finalUrl);
-    if (!localStorage.getItem(DB_KEYS.INV_SEQ)) localStorage.setItem(DB_KEYS.INV_SEQ, 1);
+    const remoteProfile = storeData.profile;
+    const remoteStaff = storeData.staff || [];
 
-    if (errEl) errEl.style.display = 'none';
-    loadMainApp(profile);
-    showToast('Store profile restored successfully!');
+    // Verify Owner vs Staff
+    let sessionObj = null;
+    if (remoteProfile.phone === mobileNo || remoteProfile.whatsapp === mobileNo) {
+      sessionObj = { role: 'admin', name: remoteProfile.ownerName, phone: mobileNo };
+    } else {
+      const matchedStaff = remoteStaff.find(s => s.phone === mobileNo);
+      if (matchedStaff) {
+        sessionObj = { role: 'staff', name: matchedStaff.name, phone: matchedStaff.phone };
+      }
+    }
+
+    if (!sessionObj) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-unlock-keyhole"></i> Verify & Login Terminal';
+      return showError('Access Denied! Mobile number is not registered as Owner or Authorized Staff for this Store ID.');
+    }
+
+    // Save cloud data locally and launch
+    if (targetUrl) {
+      localStorage.setItem(DB_KEYS.CLOUD_CFG, JSON.stringify({ url: targetUrl, secret: savedCloudCfg.secret || '' }));
+    }
+    localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(remoteProfile));
+    if (storeData.stock) localStorage.setItem(DB_KEYS.STOCK, JSON.stringify(storeData.stock));
+    if (storeData.sales) localStorage.setItem(DB_KEYS.SALES, JSON.stringify(storeData.sales));
+    if (storeData.orders) localStorage.setItem(DB_KEYS.ORDERS, JSON.stringify(storeData.orders));
+    if (storeData.staff) localStorage.setItem(DB_KEYS.STAFF, JSON.stringify(storeData.staff));
+    if (storeData.invSeq) localStorage.setItem(DB_KEYS.INV_SEQ, storeData.invSeq);
+
+    localStorage.setItem(DB_KEYS.SESSION, JSON.stringify(sessionObj));
+    loadMainApp(remoteProfile);
+    showToast(`Logged in as ${sessionObj.role.toUpperCase()} (${sessionObj.name})`);
   } catch (err) {
-    showRecoveryError('Invalid or corrupted Setup Sync Key! Please copy the exact key again or create a New Profile.');
+    showError('Unable to connect to GHS Cloud. Please verify your Cloud URL and internet connection.');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-unlock-keyhole"></i> Verify & Login Terminal';
   }
 }
 
@@ -295,7 +501,7 @@ function updateNextInvPreview() {
   if (editEl) editEl.value = parseInt(localStorage.getItem(DB_KEYS.INV_SEQ)) || 1;
 }
 
-/* Guaranteed Registration Handler */
+/* New Store Registration Handler */
 function handleInitialSetup(e) {
   if (e) e.preventDefault();
 
@@ -307,7 +513,7 @@ function handleInitialSetup(e) {
   const city = document.getElementById('reg-city').value.trim();
   const district = document.getElementById('reg-district').value;
   const pin = document.getElementById('reg-pin').value.trim();
-  const sheetUrl = (document.getElementById('reg-sheet-url').value || '').trim();
+  const cloudUrl = (document.getElementById('reg-cloud-url').value || '').trim();
 
   if (!bizName || !ownerName || !phone || !addr1 || !city || !district || !pin) {
     alert('Please fill all required (*) fields and select a District.');
@@ -315,6 +521,7 @@ function handleInitialSetup(e) {
   }
 
   const profile = {
+    profileId: generateUniqueStoreId(),
     bizName: bizName,
     ownerName: ownerName,
     gst: (document.getElementById('reg-gst').value || '').trim().toUpperCase(),
@@ -331,12 +538,16 @@ function handleInitialSetup(e) {
   };
 
   localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(profile));
-  if (sheetUrl) localStorage.setItem(DB_KEYS.SHEET_URL, sheetUrl);
+  localStorage.setItem(DB_KEYS.SESSION, JSON.stringify({ role: 'admin', name: ownerName, phone: phone }));
+  if (cloudUrl) {
+    localStorage.setItem(DB_KEYS.CLOUD_CFG, JSON.stringify({ url: cloudUrl, secret: '' }));
+  }
   if (!localStorage.getItem(DB_KEYS.INV_SEQ)) {
     localStorage.setItem(DB_KEYS.INV_SEQ, 1);
   }
 
   loadMainApp(profile);
+  if (cloudUrl) syncWithCloud(false);
 }
 
 function formatFullAddress(p) {
@@ -358,11 +569,15 @@ function loadMainApp(profile) {
 
   document.getElementById('display-biz-name').innerText = profile.bizName;
   document.getElementById('display-owner-sub').innerText = profile.ownerName;
-  document.getElementById('display-sub-loc').innerText = profile.city ? `${profile.city}, ${profile.district || 'Tripura'}` : 'Terminal Active';
 
   document.getElementById('banner-biz-name').innerText = profile.bizName;
   document.getElementById('banner-owner-meta').innerText = `${profile.ownerName} • ${profile.phone}`;
-  document.getElementById('banner-loc-pill').innerText = `${profile.district || 'Tripura'} (${profile.pin || ''})`;
+  if (document.getElementById('banner-profile-id')) {
+    document.getElementById('banner-profile-id').innerText = profile.profileId || 'GHS-000000';
+  }
+  if (document.getElementById('display-unique-profile-id')) {
+    document.getElementById('display-unique-profile-id').innerText = profile.profileId || 'GHS-000000';
+  }
 
   document.getElementById('edit-biz-name').value = profile.bizName || '';
   document.getElementById('edit-owner-name').value = profile.ownerName || '';
@@ -376,18 +591,29 @@ function loadMainApp(profile) {
   document.getElementById('edit-city').value = profile.city || '';
   if (profile.district) document.getElementById('edit-district').value = profile.district;
   document.getElementById('edit-pin').value = profile.pin || '';
-  document.getElementById('sheet-api-url').value = localStorage.getItem(DB_KEYS.SHEET_URL) || '';
+
+  const cloudCfg = JSON.parse(localStorage.getItem(DB_KEYS.CLOUD_CFG) || '{}');
+  if (document.getElementById('ghs-cloud-url')) document.getElementById('ghs-cloud-url').value = cloudCfg.url || '';
+  if (document.getElementById('ghs-cloud-secret')) document.getElementById('ghs-cloud-secret').value = cloudCfg.secret || '';
 
   renderProfileQR(profile);
+  renderStaffList();
   updateNextInvPreview();
   refreshDashboard();
   renderStockList();
   renderOrdersList();
   renderBillCart();
   populateBillingDropdown();
+  applyRolePermissions();
 }
 
 function switchTab(tabName) {
+  const session = getActiveSession();
+  if (session.role === 'staff' && tabName !== 'billing') {
+    showToast('Staff access is restricted to POS Billing only.');
+    tabName = 'billing';
+  }
+
   activeTabName = tabName;
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
@@ -707,12 +933,14 @@ function deleteOrderItem(idx) {
   orders.splice(idx, 1);
   localStorage.setItem(DB_KEYS.ORDERS, JSON.stringify(orders));
   renderOrdersList();
+  syncWithCloud(false);
 }
 
 function clearAllOrders() {
   if (!confirm('Clear all medicine orders?')) return;
   localStorage.setItem(DB_KEYS.ORDERS, JSON.stringify([]));
   renderOrdersList();
+  syncWithCloud(false);
 }
 
 function sharePurchaseOrderWA() {
@@ -1022,6 +1250,7 @@ async function generateAndShareBill(mode) {
   if (cart.length === 0) return alert('Add items to bill first.');
 
   const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE));
+  const session = getActiveSession();
   const custName = document.getElementById('cust-name').value.trim() || 'Walk-in Customer';
   const custPhone = document.getElementById('cust-phone').value.trim();
   const invNo = getNextInvoiceNumber();
@@ -1034,6 +1263,7 @@ async function generateAndShareBill(mode) {
     date: dateStr,
     custName,
     custPhone,
+    billedBy: session.name || 'Admin',
     rawSubtotal: totals.rawSubtotal,
     discPct: totals.discPct,
     discountAmt: totals.discountAmt,
@@ -1096,7 +1326,7 @@ function renderSavedBillsList() {
       <div>
         <strong style="font-size:14px;">${s.custName}</strong>
         <div style="font-size:11px; color:var(--muted); margin-top:2px;"><b style="color:var(--primary);">${s.invNo}</b> • ${s.date}</div>
-        <div style="font-size:11px; color:var(--muted); margin-top:2px;">${s.items ? s.items.length : 1} Item(s) • ${s.custPhone || 'No Phone'}</div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px;">${s.items ? s.items.length : 1} Item(s) • By: ${s.billedBy || 'Admin'}</div>
       </div>
       <div style="text-align:right;">
         <strong style="font-size:15px; display:block;">₹${s.total.toFixed(2)}</strong>
@@ -1188,75 +1418,96 @@ function updateBusinessProfile() {
 
   localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(profile));
   loadMainApp(profile);
-  showToast('Business profile & invoice settings updated!');
+  showToast('Business profile updated!');
+  syncWithCloud(false);
 }
 
-function saveSheetUrl() {
-  const url = document.getElementById('sheet-api-url').value.trim();
-  localStorage.setItem(DB_KEYS.SHEET_URL, url);
+function saveGHSCloudConfig() {
+  const url = document.getElementById('ghs-cloud-url').value.trim();
+  const secret = document.getElementById('ghs-cloud-secret').value.trim();
+  localStorage.setItem(DB_KEYS.CLOUD_CFG, JSON.stringify({ url, secret }));
   const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
   renderProfileQR(profile);
-  showToast('Google Sheet API link saved!');
+  showToast('GHS Cloud configuration saved!');
   if (url) syncWithCloud(true);
 }
 
-function saveSecurityPin() {
-  const pin = document.getElementById('app-pin').value.trim();
-  localStorage.setItem(DB_KEYS.PIN, pin);
-  showToast('Security PIN updated!');
-}
-
+/* ==================== FIXED OFFLINE JSON EXPORT & RESTORE ==================== */
 function exportBackupJSON() {
   const backupData = {
+    app: 'PharmaPOS_GHS',
     profile: JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)),
     stock: JSON.parse(localStorage.getItem(DB_KEYS.STOCK)) || [],
     sales: JSON.parse(localStorage.getItem(DB_KEYS.SALES)) || [],
     orders: JSON.parse(localStorage.getItem(DB_KEYS.ORDERS)) || [],
+    staff: JSON.parse(localStorage.getItem(DB_KEYS.STAFF)) || [],
     invSeq: localStorage.getItem(DB_KEYS.INV_SEQ) || 1,
-    syncUrl: localStorage.getItem(DB_KEYS.SHEET_URL)
+    cloudCfg: JSON.parse(localStorage.getItem(DB_KEYS.CLOUD_CFG) || '{}')
   };
-  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData, null, 2));
+  const jsonString = JSON.stringify(backupData, null, 2);
+  const blob = new Blob([jsonString], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+
   const downloadAnchor = document.createElement('a');
-  downloadAnchor.setAttribute("href", dataStr);
-  downloadAnchor.setAttribute("download", `POS_Backup_${new Date().toISOString().slice(0,10)}.json`);
+  downloadAnchor.href = url;
+  downloadAnchor.download = `POS_Backup_${new Date().toISOString().slice(0,10)}.json`;
   document.body.appendChild(downloadAnchor);
   downloadAnchor.click();
   downloadAnchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showToast('Backup JSON exported!');
 }
 
 function triggerRestoreInput() {
-  document.getElementById('restore-file-input').click();
+  const input = document.getElementById('restore-file-input');
+  input.value = ''; // Allow re-selecting same file
+  input.click();
 }
 
 function handleRestoreJSON(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+
   const fileReader = new FileReader();
   fileReader.onload = function(e) {
     try {
       const restored = JSON.parse(e.target.result);
-      if (restored.profile) localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(restored.profile));
+      if (!restored || typeof restored !== 'object' || (!restored.profile && !restored.stock)) {
+        throw new Error('Invalid backup structure');
+      }
+      if (restored.profile) {
+        if (!restored.profile.profileId) restored.profile.profileId = generateUniqueStoreId();
+        localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(restored.profile));
+      }
       if (restored.stock) localStorage.setItem(DB_KEYS.STOCK, JSON.stringify(restored.stock));
       if (restored.sales) localStorage.setItem(DB_KEYS.SALES, JSON.stringify(restored.sales));
       if (restored.orders) localStorage.setItem(DB_KEYS.ORDERS, JSON.stringify(restored.orders));
+      if (restored.staff) localStorage.setItem(DB_KEYS.STAFF, JSON.stringify(restored.staff));
       if (restored.invSeq) localStorage.setItem(DB_KEYS.INV_SEQ, restored.invSeq);
-      if (restored.syncUrl) localStorage.setItem(DB_KEYS.SHEET_URL, restored.syncUrl);
-      loadMainApp(restored.profile || {});
+      if (restored.cloudCfg) localStorage.setItem(DB_KEYS.CLOUD_CFG, JSON.stringify(restored.cloudCfg));
+
+      const currentProfile = restored.profile || JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
+      loadMainApp(currentProfile);
       showToast('Database restored successfully!');
     } catch (err) {
-      alert('Invalid backup file format.');
+      alert('Invalid backup file! Please select a valid POS_Backup JSON file.');
     }
   };
-  fileReader.readAsText(event.target.files[0]);
+  fileReader.readAsText(file);
 }
 
 function openScanner() { showToast('Camera Barcode Scanner ready.'); }
 
-/* FIXED SILENT GOOGLE SHEET CLOUD SYNC (text/plain avoids CORS preflight drop) */
+/* ==================== GHS CLOUD REAL-TIME SYNC (REST API) ==================== */
 async function syncWithCloud(isManual = false) {
-  const url = localStorage.getItem(DB_KEYS.SHEET_URL);
-  if (!url) {
-    if (isManual) showToast('Save Google Sheet Web App URL first.');
+  const cloudCfg = JSON.parse(localStorage.getItem(DB_KEYS.CLOUD_CFG) || '{}');
+  if (!cloudCfg.url) {
+    if (isManual) showToast('Configure GHS Cloud URL in Settings first.');
     return;
   }
+
+  const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
+  if (!profile.profileId) return;
 
   const pill = document.getElementById('sync-status-pill');
   if (pill) {
@@ -1265,33 +1516,72 @@ async function syncWithCloud(isManual = false) {
   }
 
   const payload = {
-    action: 'sync_all',
-    timestamp: new Date().toISOString(),
-    profile: JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {},
+    updatedAt: new Date().toISOString(),
+    profile: profile,
     stock: JSON.parse(localStorage.getItem(DB_KEYS.STOCK)) || [],
     sales: JSON.parse(localStorage.getItem(DB_KEYS.SALES)) || [],
-    orders: JSON.parse(localStorage.getItem(DB_KEYS.ORDERS)) || []
+    orders: JSON.parse(localStorage.getItem(DB_KEYS.ORDERS)) || [],
+    staff: JSON.parse(localStorage.getItem(DB_KEYS.STAFF)) || [],
+    invSeq: parseInt(localStorage.getItem(DB_KEYS.INV_SEQ)) || 1
   };
 
   try {
-    await fetch(url, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: {
-        'Content-Type': 'text/plain;charset=utf-8'
-      },
+    const baseUrl = normalizeCloudBaseUrl(cloudCfg.url);
+    const authParam = cloudCfg.secret ? `?auth=${encodeURIComponent(cloudCfg.secret)}` : '';
+    const res = await fetch(`${baseUrl}/stores/${encodeURIComponent(profile.profileId)}.json${authParam}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
+
+    if (!res.ok) throw new Error('Cloud write rejected');
 
     if (pill) {
       pill.className = 'sync-pill done';
       pill.innerHTML = '<i class="fa-solid fa-check"></i> Synced';
       setTimeout(() => { pill.style.display = 'none'; }, 2500);
     }
-    if (isManual) showToast('Data sent to Google Sheet!');
+    if (isManual) showToast('Store data synced to GHS Cloud!');
   } catch (err) {
-    console.error('Cloud Sync Error:', err);
+    console.error('GHS Cloud Sync Error:', err);
     if (pill) pill.style.display = 'none';
-    if (isManual) showToast('Sync failed. Check URL & internet.');
+    if (isManual) showToast('Sync failed. Check GHS Cloud URL & rules.');
+  }
+}
+
+async function pullFromCloud(isManual = false, overrideId = null, overrideUrl = null, overrideSecret = null) {
+  const cloudCfg = JSON.parse(localStorage.getItem(DB_KEYS.CLOUD_CFG) || '{}');
+  const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
+
+  const targetUrl = overrideUrl || cloudCfg.url;
+  const targetSecret = overrideSecret !== null ? overrideSecret : (cloudCfg.secret || '');
+  const targetId = overrideId || profile.profileId;
+
+  if (!targetUrl || !targetId) {
+    if (isManual) showToast('Configure GHS Cloud URL first.');
+    return;
+  }
+
+  try {
+    const baseUrl = normalizeCloudBaseUrl(targetUrl);
+    const authParam = targetSecret ? `?auth=${encodeURIComponent(targetSecret)}` : '';
+    const res = await fetch(`${baseUrl}/stores/${encodeURIComponent(targetId)}.json${authParam}`);
+    if (!res.ok) throw new Error('Pull failed');
+    const data = await res.json();
+
+    if (data && data.profile) {
+      localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(data.profile));
+      if (data.stock) localStorage.setItem(DB_KEYS.STOCK, JSON.stringify(data.stock));
+      if (data.sales) localStorage.setItem(DB_KEYS.SALES, JSON.stringify(data.sales));
+      if (data.orders) localStorage.setItem(DB_KEYS.ORDERS, JSON.stringify(data.orders));
+      if (data.staff) localStorage.setItem(DB_KEYS.STAFF, JSON.stringify(data.staff));
+      if (data.invSeq) localStorage.setItem(DB_KEYS.INV_SEQ, data.invSeq);
+      loadMainApp(data.profile);
+      if (isManual) showToast('Latest cloud data pulled!');
+    } else if (isManual) {
+      showToast('No cloud backup found for this Store ID yet.');
+    }
+  } catch (err) {
+    if (isManual) showToast('Failed to pull data from GHS Cloud.');
   }
 }
