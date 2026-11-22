@@ -1,3 +1,19 @@
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+/* ==================== MASTER CENTRAL ADMIN SERVER CONFIG ==================== */
+const MASTER_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyA5nFNlBoeSjYp7OA7IeObWuuStfTLhKiA",
+  authDomain: "pharmacy-pos-84203.firebaseapp.com",
+  projectId: "pharmacy-pos-84203",
+  storageBucket: "pharmacy-pos-84203.firebasestorage.app",
+  messagingSenderId: "1082478795452",
+  appId: "1:1082478795452:web:2ed69b5b55cbe2e2454eb9"
+};
+
+const masterApp = initializeApp(MASTER_FIREBASE_CONFIG, "CentralLicenseAuthority");
+const masterDb = getFirestore(masterApp);
+
 const DB_KEYS = {
   PROFILE: 'retailer_biz_profile',
   STOCK: 'retailer_stock_list',
@@ -7,12 +23,15 @@ const DB_KEYS = {
   INV_SEQ: 'retailer_invoice_seq',
   CLOUD_CFG: 'retailer_ghs_cloud_cfg',
   SESSION: 'retailer_active_session',
-  THEME: 'retailer_app_theme'
+  THEME: 'retailer_app_theme',
+  LICENSE_APPROVED: 'retailer_central_license_approved'
 };
 
 let cart = [];
 let currentStockFilter = 'all';
 let activeTabName = 'home';
+let currentLoginRole = 'admin';
+let unsubscribeLicenseListener = null;
 
 document.addEventListener('DOMContentLoaded', () => {
   const savedTheme = localStorage.getItem(DB_KEYS.THEME) || 'colorful';
@@ -60,7 +79,190 @@ document.addEventListener('DOMContentLoaded', () => {
 
   setupSmartExpiryValidation();
   setupBackNavigationHandler();
+  protectLicenseOverlayDOM();
 });
+
+/* ==================== CENTRAL LICENSE APPROVAL & AUTO-CONFIG SYNC ==================== */
+async function registerStoreForCentralApproval(profile) {
+  try {
+    const reqRef = doc(masterDb, "license_requests", profile.profileId);
+    const snap = await getDoc(reqRef);
+
+    if (!snap.exists()) {
+      await setDoc(reqRef, {
+        profileId: profile.profileId,
+        bizName: profile.bizName,
+        ownerName: profile.ownerName,
+        phone: profile.phone,
+        whatsapp: profile.whatsapp || profile.phone,
+        email: profile.email || "",
+        addr1: profile.addr1 || "",
+        addr2: profile.addr2 || "",
+        city: profile.city || "",
+        district: profile.district || "",
+        state: profile.state || "Tripura",
+        pin: profile.pin || "",
+        gst: profile.gst || "",
+        dlNo: profile.dlNo || "",
+        adminPin: profile.adminPin || "",
+        staffList: JSON.parse(localStorage.getItem(DB_KEYS.STAFF) || '[]'),
+        cloudUrl: "",
+        cloudSecret: "",
+        status: "pending",
+        requestedAt: new Date().toISOString()
+      });
+    }
+  } catch (err) {
+    console.error("Central registration sync error:", err);
+  }
+}
+
+async function syncStoreMetadataToCentral(profile) {
+  if (!profile || !profile.profileId) return;
+  const cloudCfg = JSON.parse(localStorage.getItem(DB_KEYS.CLOUD_CFG) || '{}');
+  const staffList = JSON.parse(localStorage.getItem(DB_KEYS.STAFF) || '[]');
+  try {
+    await setDoc(doc(masterDb, "license_requests", profile.profileId), {
+      bizName: profile.bizName,
+      ownerName: profile.ownerName,
+      phone: profile.phone,
+      whatsapp: profile.whatsapp || profile.phone,
+      email: profile.email || "",
+      addr1: profile.addr1 || "",
+      addr2: profile.addr2 || "",
+      city: profile.city || "",
+      district: profile.district || "",
+      state: profile.state || "Tripura",
+      pin: profile.pin || "",
+      gst: profile.gst || "",
+      dlNo: profile.dlNo || "",
+      adminPin: profile.adminPin || "",
+      staffList: staffList,
+      cloudUrl: cloudCfg.url || "",
+      cloudSecret: cloudCfg.secret || ""
+    }, { merge: true });
+  } catch (err) {
+    console.warn("Central metadata update skipped (offline):", err);
+  }
+}
+
+function attachCentralLicenseWatcher(profile) {
+  if (!profile || !profile.profileId) return;
+
+  const cachedStatus = localStorage.getItem(`${DB_KEYS.LICENSE_APPROVED}_${profile.profileId}`);
+  if (cachedStatus !== 'approved') {
+    showHardLicenseLock(profile, "PENDING APPROVAL");
+  }
+
+  if (unsubscribeLicenseListener) {
+    unsubscribeLicenseListener();
+  }
+
+  try {
+    const reqRef = doc(masterDb, "license_requests", profile.profileId);
+    unsubscribeLicenseListener = onSnapshot(reqRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.status === "approved") {
+          localStorage.setItem(`${DB_KEYS.LICENSE_APPROVED}_${profile.profileId}`, "approved");
+          hideHardLicenseLock();
+        } else {
+          localStorage.removeItem(`${DB_KEYS.LICENSE_APPROVED}_${profile.profileId}`);
+          const label = data.status === "suspended" ? "LICENSE SUSPENDED" : "INVALID LICENSE KEY • PENDING";
+          showHardLicenseLock(profile, label);
+        }
+      } else {
+        registerStoreForCentralApproval(profile);
+        localStorage.removeItem(`${DB_KEYS.LICENSE_APPROVED}_${profile.profileId}`);
+        showHardLicenseLock(profile, "INVALID LICENSE KEY • UNREGISTERED");
+      }
+    }, (error) => {
+      console.warn("License listener warning:", error);
+    });
+  } catch (err) {
+    console.error("Watcher setup failed:", err);
+  }
+}
+
+async function verifyCentralLicenseStatus(isManual = false) {
+  const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE) || 'null');
+  if (!profile || !profile.profileId) return;
+
+  const btn = document.getElementById('btn-recheck-license');
+  if (btn && isManual) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking Central Server...';
+  }
+
+  try {
+    const reqRef = doc(masterDb, "license_requests", profile.profileId);
+    const snap = await getDoc(reqRef);
+
+    if (snap.exists() && snap.data().status === "approved") {
+      localStorage.setItem(`${DB_KEYS.LICENSE_APPROVED}_${profile.profileId}`, "approved");
+      hideHardLicenseLock();
+      showToast("License Approved! Welcome to PharmaPOS Pro.");
+    } else {
+      if (!snap.exists()) {
+        await registerStoreForCentralApproval(profile);
+      }
+      localStorage.removeItem(`${DB_KEYS.LICENSE_APPROVED}_${profile.profileId}`);
+      showHardLicenseLock(profile, "INVALID LICENSE KEY • NOT APPROVED");
+      if (isManual) showToast("Still pending approval from developer.");
+    }
+  } catch (err) {
+    if (isManual) showToast("Network error. Please check internet connection.");
+  } finally {
+    if (btn && isManual) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-rotate"></i> Check Approval Status';
+    }
+  }
+}
+
+function showHardLicenseLock(profile, badgeText = "INVALID LICENSE KEY") {
+  const overlay = document.getElementById('license-lock-overlay');
+  if (!overlay) return;
+
+  document.getElementById('lock-display-store-id').innerText = profile.profileId || 'GHS-000000';
+  document.getElementById('lock-display-store-name').innerText = `${profile.bizName || 'Pharmacy'} (${profile.ownerName || ''})`;
+  document.getElementById('lock-status-badge').innerText = badgeText;
+
+  const waText = encodeURIComponent(
+    `Hello D. Hossain,\nPlease approve my PharmaPOS Store License:\n• Store Name: ${profile.bizName}\n• Store ID: ${profile.profileId}\n• Owner: ${profile.ownerName} (${profile.phone})`
+  );
+  const waBtn = document.getElementById('lock-wa-btn');
+  if (waBtn) waBtn.href = `https://wa.me/916909998882?text=${waText}`;
+
+  overlay.style.display = 'flex';
+  overlay.dataset.locked = 'true';
+}
+
+function hideHardLicenseLock() {
+  const overlay = document.getElementById('license-lock-overlay');
+  if (!overlay) return;
+  overlay.dataset.locked = 'false';
+  overlay.style.display = 'none';
+}
+
+function copyLockedStoreId() {
+  const idText = document.getElementById('lock-display-store-id').innerText;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(idText);
+  }
+  showToast(`Store ID ${idText} copied!`);
+}
+
+function protectLicenseOverlayDOM() {
+  const overlay = document.getElementById('license-lock-overlay');
+  if (!overlay) return;
+  const observer = new MutationObserver(() => {
+    if (overlay.dataset.locked === 'true' && overlay.style.display === 'none') {
+      overlay.style.display = 'flex';
+    }
+  });
+  observer.observe(overlay, { attributes: true, attributeFilter: ['style', 'class'] });
+}
 
 /* ==================== UNIQUE STORE ID GENERATOR ==================== */
 function generateUniqueStoreId() {
@@ -83,6 +285,12 @@ function setupBackNavigationHandler() {
   window.history.pushState({ appState: 'root' }, '');
 
   window.addEventListener('popstate', () => {
+    const lockOverlay = document.getElementById('license-lock-overlay');
+    if (lockOverlay && lockOverlay.dataset.locked === 'true') {
+      window.history.pushState({ appState: 'root' }, '');
+      return;
+    }
+
     const stockModal = document.getElementById('stock-modal');
     const billsModal = document.getElementById('saved-bills-modal');
 
@@ -131,15 +339,20 @@ function applyRolePermissions() {
   } else {
     document.body.classList.remove('staff-mode');
     if (roleBadge) {
-      roleBadge.innerText = 'Admin Terminal';
+      roleBadge.innerText = 'Administrator Terminal';
       roleBadge.parentElement.classList.remove('staff');
     }
     if (staffLogoutBtn) staffLogoutBtn.style.display = 'none';
   }
 }
 
-function logoutCurrentSession() {
-  if (!confirm('Logout from this terminal session?')) return;
+function logoutCurrentSession(skipConfirm = false) {
+  if (!skipConfirm && !confirm('Logout from this terminal session?')) return;
+  if (unsubscribeLicenseListener) {
+    unsubscribeLicenseListener();
+    unsubscribeLicenseListener = null;
+  }
+  hideHardLicenseLock();
   localStorage.removeItem(DB_KEYS.SESSION);
   localStorage.removeItem(DB_KEYS.PROFILE);
   document.body.classList.remove('staff-mode');
@@ -151,7 +364,7 @@ function logoutCurrentSession() {
 }
 
 /* ==================== STAFF MANAGEMENT (ADMIN) ==================== */
-function addAuthorizedStaff() {
+async function addAuthorizedStaff() {
   const name = document.getElementById('new-staff-name').value.trim();
   const phone = document.getElementById('new-staff-phone').value.trim();
 
@@ -178,6 +391,9 @@ function addAuthorizedStaff() {
   document.getElementById('new-staff-phone').value = '';
   renderStaffList();
   showToast('Authorized staff added!');
+
+  const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
+  await syncStoreMetadataToCentral(profile);
   syncWithCloud(false);
 }
 
@@ -202,12 +418,15 @@ function renderStaffList() {
   `).join('');
 }
 
-function removeStaffMember(idx) {
+async function removeStaffMember(idx) {
   if (!confirm('Remove this staff member? They will no longer be able to login.')) return;
   const staffList = JSON.parse(localStorage.getItem(DB_KEYS.STAFF)) || [];
   staffList.splice(idx, 1);
   localStorage.setItem(DB_KEYS.STAFF, JSON.stringify(staffList));
   renderStaffList();
+
+  const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
+  await syncStoreMetadataToCentral(profile);
   syncWithCloud(false);
 }
 
@@ -223,79 +442,46 @@ function setAppTheme(themeName, notify = true) {
   if (notify) showToast(`Theme changed to ${themeName.toUpperCase()}`);
 }
 
-/* ==================== COMPACT SETUP SYNC KEY & CLEAN QR ==================== */
-function buildCompactSyncPayload(profile) {
-  const cloudCfg = JSON.parse(localStorage.getItem(DB_KEYS.CLOUD_CFG)) || {};
-  const fields = [
-    profile.profileId || generateUniqueStoreId(),
-    profile.bizName || '',
-    profile.ownerName || '',
-    profile.gst || '',
-    profile.dlNo || '',
-    profile.phone || '',
-    profile.whatsapp || profile.phone || '',
-    profile.email || '',
-    profile.addr1 || '',
-    profile.addr2 || '',
-    profile.city || '',
-    profile.district || 'Sepahijala',
-    profile.pin || '',
-    cloudCfg.url || '',
-    cloudCfg.secret || ''
-  ];
-  const packed = fields.join('|');
-  return 'GHS1:' + btoa(unescape(encodeURIComponent(packed)));
-}
-
+/* ==================== QR & STORE SHARE HELPER ==================== */
 function renderProfileQR(profile) {
   const qrBox = document.getElementById('profile-qr-container');
   if (!qrBox) return;
 
   qrBox.innerHTML = '';
-  const syncKey = buildCompactSyncPayload(profile);
+  const qrText = `STORE_ID:${profile.profileId}|OWNER:${profile.phone}`;
   if (typeof QRCode !== 'undefined') {
     new QRCode(qrBox, {
-      text: syncKey,
+      text: qrText,
       width: 148,
       height: 148,
       colorDark: '#0f172a',
       colorLight: '#ffffff',
-      correctLevel: QRCode.CorrectLevel.L
+      correctLevel: QRCode.CorrectLevel.M
     });
   }
 }
 
 function copyProfileCode() {
   const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
-  const syncKey = buildCompactSyncPayload(profile);
+  const idText = profile.profileId || '';
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(syncKey);
-  } else {
-    const temp = document.createElement('textarea');
-    temp.value = syncKey;
-    document.body.appendChild(temp);
-    temp.select();
-    document.execCommand('copy');
-    temp.remove();
+    navigator.clipboard.writeText(idText);
   }
-  showToast('Setup Sync Key copied!');
+  showToast(`Store ID ${idText} copied!`);
 }
 
 function shareProfileCodeWA() {
   const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
-  const cloudCfg = JSON.parse(localStorage.getItem(DB_KEYS.CLOUD_CFG)) || {};
-  const syncKey = buildCompactSyncPayload(profile);
   const msg = encodeURIComponent(
-    `*${profile.bizName} - Multi-Device & Staff Login*\n\n` +
+    `*${profile.bizName} - Terminal Login Details*\n\n` +
     `• *Store Profile ID:* ${profile.profileId}\n` +
-    `• *Owner Mobile:* ${profile.phone}\n` +
-    (cloudCfg.url ? `• *GHS Cloud URL:* ${cloudCfg.url}\n\n` : '\n') +
-    `Or paste this Quick Setup Key:\n${syncKey}`
+    `• *Admin Mobile:* ${profile.phone}\n\n` +
+    `Open PharmaPOS Pro > Existing Login and enter your Store ID & Mobile Number to connect automatically.`
   );
   window.open(`https://wa.me/?text=${msg}`, '_blank');
 }
 
-/* ==================== MULTI-USER LOGIN (OWNER / STAFF) ==================== */
+/* ==================== CLEAN ZERO-CONFIG MULTI-USER LOGIN ==================== */
 function switchOnboardingMode(mode) {
   const newForm = document.getElementById('setup-form');
   const restoreBox = document.getElementById('restore-code-box');
@@ -314,6 +500,35 @@ function switchOnboardingMode(mode) {
     restoreBox.style.display = 'block';
     btnNew.classList.remove('active');
     btnRes.classList.add('active');
+    switchLoginRoleTab('admin');
+  }
+}
+
+function switchLoginRoleTab(role) {
+  currentLoginRole = role;
+  const tabAdmin = document.getElementById('role-tab-admin');
+  const tabStaff = document.getElementById('role-tab-staff');
+  const hintBox = document.getElementById('login-role-hint');
+  const mobileLabel = document.getElementById('login-mobile-label');
+  const pinWrapper = document.getElementById('login-pin-wrapper');
+  const submitBtn = document.getElementById('btn-verify-login');
+  const errEl = document.getElementById('recovery-error-msg');
+  if (errEl) errEl.style.display = 'none';
+
+  if (role === 'admin') {
+    tabAdmin.classList.add('active');
+    tabStaff.classList.remove('active');
+    hintBox.innerHTML = `<i class="fa-solid fa-shield-halved"></i><p><strong>Administrator Login:</strong> Enter Store Profile ID, Owner Mobile Number, and 6-Digit Admin PIN. Cloud data syncs automatically.</p>`;
+    mobileLabel.innerText = 'Administrator Mobile Number *';
+    pinWrapper.style.display = 'block';
+    submitBtn.innerHTML = '<i class="fa-solid fa-unlock-keyhole"></i> Verify & Login Administrator';
+  } else {
+    tabStaff.classList.add('active');
+    tabAdmin.classList.remove('active');
+    hintBox.innerHTML = `<i class="fa-solid fa-user-nurse"></i><p><strong>Staff Login:</strong> Enter Store Profile ID and your registered Staff Mobile Number. No PIN or Cloud setup required.</p>`;
+    mobileLabel.innerText = 'Registered Staff Mobile Number *';
+    pinWrapper.style.display = 'none';
+    submitBtn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> Verify & Login Staff';
   }
 }
 
@@ -327,8 +542,7 @@ function normalizeCloudBaseUrl(rawUrl) {
 async function handleMultiUserLogin() {
   const profileId = document.getElementById('login-profile-id').value.trim().toUpperCase();
   const mobileNo = document.getElementById('login-mobile-no').value.trim();
-  const cloudUrlInput = document.getElementById('login-cloud-url').value.trim();
-  const setupKeyInput = document.getElementById('recover-profile-code').value.trim();
+  const enteredPin = document.getElementById('login-admin-pin').value.trim();
   const errEl = document.getElementById('recovery-error-msg');
   const btn = document.getElementById('btn-verify-login');
 
@@ -338,78 +552,70 @@ async function handleMultiUserLogin() {
   };
   errEl.style.display = 'none';
 
-  // Option 1: Quick Setup Key Shortcut
-  if (setupKeyInput) {
-    if (!setupKeyInput.startsWith('GHS1:')) {
-      return showError('Invalid Setup Sync Key! Must start with GHS1:');
-    }
-    try {
-      const base64Part = setupKeyInput.substring(5).trim();
-      const parts = decodeURIComponent(escape(atob(base64Part))).split('|');
-      if (parts.length < 13 || !parts[1]) throw new Error('Invalid key');
-
-      const profile = {
-        profileId: parts[0],
-        bizName: parts[1],
-        ownerName: parts[2],
-        gst: parts[3] || '',
-        dlNo: parts[4] || '',
-        phone: parts[5] || '',
-        whatsapp: parts[6] || parts[5] || '',
-        email: parts[7] || '',
-        addr1: parts[8] || '',
-        addr2: parts[9] || '',
-        city: parts[10] || '',
-        district: parts[11] || 'Sepahijala',
-        state: 'Tripura',
-        pin: parts[12] || ''
-      };
-
-      const finalUrl = cloudUrlInput || parts[13] || '';
-      const finalSecret = parts[14] || '';
-      if (finalUrl) {
-        localStorage.setItem(DB_KEYS.CLOUD_CFG, JSON.stringify({ url: finalUrl, secret: finalSecret }));
-      }
-      localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(profile));
-      localStorage.setItem(DB_KEYS.SESSION, JSON.stringify({ role: 'admin', name: profile.ownerName, phone: profile.phone }));
-      if (!localStorage.getItem(DB_KEYS.INV_SEQ)) localStorage.setItem(DB_KEYS.INV_SEQ, 1);
-
-      if (finalUrl) await pullFromCloud(false, profile.profileId, finalUrl, finalSecret);
-      loadMainApp(profile);
-      showToast('Admin profile restored & synced!');
-      return;
-    } catch {
-      return showError('Corrupted Setup Sync Key. Please verify and try again.');
-    }
-  }
-
-  // Option 2: Unique Store ID + Owner/Staff Mobile Number
   if (!profileId || !mobileNo) {
     return showError('Please enter both Unique Store Profile ID and Mobile Number.');
   }
-
-  // Check if local profile already matches
-  const localProfile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE) || 'null');
-  const savedCloudCfg = JSON.parse(localStorage.getItem(DB_KEYS.CLOUD_CFG) || '{}');
-  const targetUrl = cloudUrlInput || savedCloudCfg.url || '';
-
-  if (!targetUrl && (!localProfile || localProfile.profileId !== profileId)) {
-    return showError('Please provide the GHS Cloud Database URL to fetch this store profile from the cloud.');
+  if (currentLoginRole === 'admin' && enteredPin.length !== 6) {
+    return showError('Please enter your 6-Digit Admin Security PIN.');
   }
 
   btn.disabled = true;
-  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Verifying Account...';
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Syncing & Verifying...';
 
   try {
+    // 1. Automatically fetch Store Metadata & Saved Cloud Config from Central Registry
+    const centralSnap = await getDoc(doc(masterDb, "license_requests", profileId));
+    let centralData = centralSnap.exists() ? centralSnap.data() : null;
+
+    const localProfile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE) || 'null');
+    const savedCloudCfg = JSON.parse(localStorage.getItem(DB_KEYS.CLOUD_CFG) || '{}');
+
+    // Automatically resolve Store's Cloud URL without asking user
+    const autoCloudUrl = (centralData && centralData.cloudUrl) || savedCloudCfg.url || '';
+    const autoCloudSecret = (centralData && centralData.cloudSecret) || savedCloudCfg.secret || '';
+
     let storeData = null;
 
-    if (targetUrl) {
-      const baseUrl = normalizeCloudBaseUrl(targetUrl);
-      const authParam = savedCloudCfg.secret ? `?auth=${encodeURIComponent(savedCloudCfg.secret)}` : '';
-      const res = await fetch(`${baseUrl}/stores/${encodeURIComponent(profileId)}.json${authParam}`);
-      if (!res.ok) throw new Error('Network error');
-      storeData = await res.json();
-    } else if (localProfile && localProfile.profileId === profileId) {
+    // 2. If Store has a configured Cloud Database, pull live inventory/sales/staff automatically
+    if (autoCloudUrl) {
+      try {
+        const baseUrl = normalizeCloudBaseUrl(autoCloudUrl);
+        const authParam = autoCloudSecret ? `?auth=${encodeURIComponent(autoCloudSecret)}` : '';
+        const res = await fetch(`${baseUrl}/stores/${encodeURIComponent(profileId)}.json${authParam}`);
+        if (res.ok) {
+          const remoteJson = await res.json();
+          if (remoteJson && remoteJson.profile) {
+            storeData = remoteJson;
+          }
+        }
+      } catch (e) {
+        console.warn("Store cloud fetch fallback:", e);
+      }
+    }
+
+    // 3. Fallback to Central Registry Metadata or Local Storage if Store Cloud URL isn't set yet
+    if (!storeData && centralData) {
+      storeData = {
+        profile: {
+          profileId: centralData.profileId,
+          bizName: centralData.bizName,
+          ownerName: centralData.ownerName,
+          phone: centralData.phone,
+          whatsapp: centralData.whatsapp || centralData.phone,
+          email: centralData.email || '',
+          addr1: centralData.addr1 || '',
+          addr2: centralData.addr2 || '',
+          city: centralData.city || '',
+          district: centralData.district || 'Sepahijala',
+          state: centralData.state || 'Tripura',
+          pin: centralData.pin || '',
+          gst: centralData.gst || '',
+          dlNo: centralData.dlNo || '',
+          adminPin: centralData.adminPin || ''
+        },
+        staff: centralData.staffList || JSON.parse(localStorage.getItem(DB_KEYS.STAFF) || '[]')
+      };
+    } else if (!storeData && localProfile && localProfile.profileId === profileId) {
       storeData = {
         profile: localProfile,
         staff: JSON.parse(localStorage.getItem(DB_KEYS.STAFF) || '[]')
@@ -417,50 +623,50 @@ async function handleMultiUserLogin() {
     }
 
     if (!storeData || !storeData.profile) {
-      btn.disabled = false;
-      btn.innerHTML = '<i class="fa-solid fa-unlock-keyhole"></i> Verify & Login Terminal';
-      return showError('Store Profile ID not found! Please check the ID or create a New Store.');
+      return showError('Store Profile ID not found! Please check the Store ID.');
     }
 
     const remoteProfile = storeData.profile;
-    const remoteStaff = storeData.staff || [];
-
-    // Verify Owner vs Staff
+    const remoteStaff = storeData.staff || (centralData && centralData.staffList) || [];
     let sessionObj = null;
-    if (remoteProfile.phone === mobileNo || remoteProfile.whatsapp === mobileNo) {
+
+    // 4. Verify Credentials based on Selected Role
+    if (currentLoginRole === 'admin') {
+      const isOwnerPhone = (remoteProfile.phone === mobileNo || remoteProfile.whatsapp === mobileNo);
+      if (!isOwnerPhone) {
+        return showError('Mobile number does not match the Administrator of this Store ID.');
+      }
+      if (remoteProfile.adminPin && remoteProfile.adminPin !== enteredPin) {
+        return showError('Incorrect 6-Digit Admin Security PIN!');
+      }
       sessionObj = { role: 'admin', name: remoteProfile.ownerName, phone: mobileNo };
     } else {
       const matchedStaff = remoteStaff.find(s => s.phone === mobileNo);
-      if (matchedStaff) {
-        sessionObj = { role: 'staff', name: matchedStaff.name, phone: matchedStaff.phone };
+      if (!matchedStaff) {
+        return showError('Access Denied! Mobile number is not registered as Authorized Staff.');
       }
+      sessionObj = { role: 'staff', name: matchedStaff.name, phone: matchedStaff.phone };
     }
 
-    if (!sessionObj) {
-      btn.disabled = false;
-      btn.innerHTML = '<i class="fa-solid fa-unlock-keyhole"></i> Verify & Login Terminal';
-      return showError('Access Denied! Mobile number is not registered as Owner or Authorized Staff for this Store ID.');
-    }
-
-    // Save cloud data locally and launch
-    if (targetUrl) {
-      localStorage.setItem(DB_KEYS.CLOUD_CFG, JSON.stringify({ url: targetUrl, secret: savedCloudCfg.secret || '' }));
+    // 5. Save Cloud Config & All Store Data Automatically
+    if (autoCloudUrl) {
+      localStorage.setItem(DB_KEYS.CLOUD_CFG, JSON.stringify({ url: autoCloudUrl, secret: autoCloudSecret }));
     }
     localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(remoteProfile));
     if (storeData.stock) localStorage.setItem(DB_KEYS.STOCK, JSON.stringify(storeData.stock));
     if (storeData.sales) localStorage.setItem(DB_KEYS.SALES, JSON.stringify(storeData.sales));
     if (storeData.orders) localStorage.setItem(DB_KEYS.ORDERS, JSON.stringify(storeData.orders));
-    if (storeData.staff) localStorage.setItem(DB_KEYS.STAFF, JSON.stringify(storeData.staff));
+    if (remoteStaff.length > 0) localStorage.setItem(DB_KEYS.STAFF, JSON.stringify(remoteStaff));
     if (storeData.invSeq) localStorage.setItem(DB_KEYS.INV_SEQ, storeData.invSeq);
 
     localStorage.setItem(DB_KEYS.SESSION, JSON.stringify(sessionObj));
     loadMainApp(remoteProfile);
-    showToast(`Logged in as ${sessionObj.role.toUpperCase()} (${sessionObj.name})`);
+    showToast(`Welcome ${sessionObj.name}! Terminal synced.`);
   } catch (err) {
-    showError('Unable to connect to GHS Cloud. Please verify your Cloud URL and internet connection.');
+    showError('Unable to verify account. Please check your internet connection.');
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '<i class="fa-solid fa-unlock-keyhole"></i> Verify & Login Terminal';
+    switchLoginRoleTab(currentLoginRole);
   }
 }
 
@@ -502,21 +708,26 @@ function updateNextInvPreview() {
 }
 
 /* New Store Registration Handler */
-function handleInitialSetup(e) {
+async function handleInitialSetup(e) {
   if (e) e.preventDefault();
 
   const bizName = document.getElementById('reg-biz-name').value.trim();
   const ownerName = document.getElementById('reg-owner-name').value.trim();
   const phone = document.getElementById('reg-phone').value.trim();
   const whatsapp = document.getElementById('reg-whatsapp').value.trim();
+  const adminPin = document.getElementById('reg-admin-pin').value.trim();
   const addr1 = document.getElementById('reg-addr1').value.trim();
   const city = document.getElementById('reg-city').value.trim();
   const district = document.getElementById('reg-district').value;
   const pin = document.getElementById('reg-pin').value.trim();
-  const cloudUrl = (document.getElementById('reg-cloud-url').value || '').trim();
 
   if (!bizName || !ownerName || !phone || !addr1 || !city || !district || !pin) {
     alert('Please fill all required (*) fields and select a District.');
+    return;
+  }
+
+  if (!/^\d{6}$/.test(adminPin)) {
+    alert('Please create a valid 6-Digit Admin Security PIN (numbers only).');
     return;
   }
 
@@ -529,6 +740,7 @@ function handleInitialSetup(e) {
     phone: phone,
     whatsapp: whatsapp || phone,
     email: (document.getElementById('reg-email').value || '').trim(),
+    adminPin: adminPin,
     addr1: addr1,
     addr2: (document.getElementById('reg-addr2').value || '').trim(),
     city: city,
@@ -539,15 +751,12 @@ function handleInitialSetup(e) {
 
   localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(profile));
   localStorage.setItem(DB_KEYS.SESSION, JSON.stringify({ role: 'admin', name: ownerName, phone: phone }));
-  if (cloudUrl) {
-    localStorage.setItem(DB_KEYS.CLOUD_CFG, JSON.stringify({ url: cloudUrl, secret: '' }));
-  }
   if (!localStorage.getItem(DB_KEYS.INV_SEQ)) {
     localStorage.setItem(DB_KEYS.INV_SEQ, 1);
   }
 
+  await registerStoreForCentralApproval(profile);
   loadMainApp(profile);
-  if (cloudUrl) syncWithCloud(false);
 }
 
 function formatFullAddress(p) {
@@ -586,6 +795,9 @@ function loadMainApp(profile) {
   document.getElementById('edit-phone').value = profile.phone || '';
   document.getElementById('edit-whatsapp').value = profile.whatsapp || profile.phone || '';
   document.getElementById('edit-email').value = profile.email || '';
+  if (document.getElementById('edit-admin-pin')) {
+    document.getElementById('edit-admin-pin').value = profile.adminPin || '';
+  }
   document.getElementById('edit-addr1').value = profile.addr1 || profile.address || '';
   document.getElementById('edit-addr2').value = profile.addr2 || '';
   document.getElementById('edit-city').value = profile.city || '';
@@ -605,6 +817,8 @@ function loadMainApp(profile) {
   renderBillCart();
   populateBillingDropdown();
   applyRolePermissions();
+
+  attachCentralLicenseWatcher(profile);
 }
 
 function switchTab(tabName) {
@@ -1395,8 +1609,15 @@ function refreshDashboard() {
   }
 }
 
-function updateBusinessProfile() {
+async function updateBusinessProfile() {
   const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
+  const newAdminPin = document.getElementById('edit-admin-pin').value.trim();
+
+  if (newAdminPin && !/^\d{6}$/.test(newAdminPin)) {
+    alert('Admin PIN must be exactly 6 numeric digits.');
+    return;
+  }
+
   profile.bizName = document.getElementById('edit-biz-name').value.trim();
   profile.ownerName = document.getElementById('edit-owner-name').value.trim();
   profile.gst = document.getElementById('edit-gst').value.trim().toUpperCase();
@@ -1404,6 +1625,7 @@ function updateBusinessProfile() {
   profile.phone = document.getElementById('edit-phone').value.trim();
   profile.whatsapp = document.getElementById('edit-whatsapp').value.trim();
   profile.email = document.getElementById('edit-email').value.trim();
+  if (newAdminPin) profile.adminPin = newAdminPin;
   profile.addr1 = document.getElementById('edit-addr1').value.trim();
   profile.addr2 = document.getElementById('edit-addr2').value.trim();
   profile.city = document.getElementById('edit-city').value.trim();
@@ -1418,21 +1640,28 @@ function updateBusinessProfile() {
 
   localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(profile));
   loadMainApp(profile);
-  showToast('Business profile updated!');
+  showToast('Business profile & PIN updated!');
+
+  await syncStoreMetadataToCentral(profile);
   syncWithCloud(false);
 }
 
-function saveGHSCloudConfig() {
+async function saveGHSCloudConfig() {
   const url = document.getElementById('ghs-cloud-url').value.trim();
   const secret = document.getElementById('ghs-cloud-secret').value.trim();
   localStorage.setItem(DB_KEYS.CLOUD_CFG, JSON.stringify({ url, secret }));
+
   const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
   renderProfileQR(profile);
-  showToast('GHS Cloud configuration saved!');
+
+  // Automatically save cloud link to Central Registry so future logins on any device auto-connect!
+  await syncStoreMetadataToCentral(profile);
+
+  showToast('GHS Cloud saved & auto-linked for all logins!');
   if (url) syncWithCloud(true);
 }
 
-/* ==================== FIXED OFFLINE JSON EXPORT & RESTORE ==================== */
+/* ==================== OFFLINE JSON EXPORT & RESTORE ==================== */
 function exportBackupJSON() {
   const backupData = {
     app: 'PharmaPOS_GHS',
@@ -1460,7 +1689,7 @@ function exportBackupJSON() {
 
 function triggerRestoreInput() {
   const input = document.getElementById('restore-file-input');
-  input.value = ''; // Allow re-selecting same file
+  input.value = '';
   input.click();
 }
 
@@ -1469,7 +1698,7 @@ function handleRestoreJSON(event) {
   if (!file) return;
 
   const fileReader = new FileReader();
-  fileReader.onload = function(e) {
+  fileReader.onload = async function(e) {
     try {
       const restored = JSON.parse(e.target.result);
       if (!restored || typeof restored !== 'object' || (!restored.profile && !restored.stock)) {
@@ -1487,6 +1716,7 @@ function handleRestoreJSON(event) {
       if (restored.cloudCfg) localStorage.setItem(DB_KEYS.CLOUD_CFG, JSON.stringify(restored.cloudCfg));
 
       const currentProfile = restored.profile || JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
+      await syncStoreMetadataToCentral(currentProfile);
       loadMainApp(currentProfile);
       showToast('Database restored successfully!');
     } catch (err) {
@@ -1498,11 +1728,11 @@ function handleRestoreJSON(event) {
 
 function openScanner() { showToast('Camera Barcode Scanner ready.'); }
 
-/* ==================== GHS CLOUD REAL-TIME SYNC (REST API) ==================== */
+/* ==================== STORE GHS CLOUD REAL-TIME SYNC (CLIENT DB) ==================== */
 async function syncWithCloud(isManual = false) {
   const cloudCfg = JSON.parse(localStorage.getItem(DB_KEYS.CLOUD_CFG) || '{}');
   if (!cloudCfg.url) {
-    if (isManual) showToast('Configure GHS Cloud URL in Settings first.');
+    if (isManual) showToast('Configure Store GHS Cloud URL in Settings first.');
     return;
   }
 
@@ -1558,7 +1788,7 @@ async function pullFromCloud(isManual = false, overrideId = null, overrideUrl = 
   const targetId = overrideId || profile.profileId;
 
   if (!targetUrl || !targetId) {
-    if (isManual) showToast('Configure GHS Cloud URL first.');
+    if (isManual) showToast('Configure Store GHS Cloud URL first.');
     return;
   }
 
@@ -1585,3 +1815,51 @@ async function pullFromCloud(isManual = false, overrideId = null, overrideUrl = 
     if (isManual) showToast('Failed to pull data from GHS Cloud.');
   }
 }
+
+/* ==================== EXPOSE FUNCTIONS TO GLOBAL WINDOW FOR HTML ONCLICK ==================== */
+window.switchOnboardingMode = switchOnboardingMode;
+window.switchLoginRoleTab = switchLoginRoleTab;
+window.handleInitialSetup = handleInitialSetup;
+window.handleMultiUserLogin = handleMultiUserLogin;
+window.verifyCentralLicenseStatus = verifyCentralLicenseStatus;
+window.copyLockedStoreId = copyLockedStoreId;
+window.logoutCurrentSession = logoutCurrentSession;
+window.switchTab = switchTab;
+window.openExpiringTab = openExpiringTab;
+window.toggleAccordion = toggleAccordion;
+window.openAddStockModal = openAddStockModal;
+window.closeAddStockModal = closeAddStockModal;
+window.setStockModalMode = setStockModalMode;
+window.showRestockCurrentInfo = showRestockCurrentInfo;
+window.setStockFilter = setStockFilter;
+window.renderStockList = renderStockList;
+window.quickAddToOrder = quickAddToOrder;
+window.addMedicineOrder = addMedicineOrder;
+window.deleteOrderItem = deleteOrderItem;
+window.clearAllOrders = clearAllOrders;
+window.sharePurchaseOrderWA = sharePurchaseOrderWA;
+window.adjustBillQty = adjustBillQty;
+window.updateSelectedStockHint = updateSelectedStockHint;
+window.addToBill = addToBill;
+window.renderBillCart = renderBillCart;
+window.removeCartItem = removeCartItem;
+window.clearCart = clearCart;
+window.generateAndShareBill = generateAndShareBill;
+window.openSavedBillsModal = openSavedBillsModal;
+window.closeSavedBillsModal = closeSavedBillsModal;
+window.renderSavedBillsList = renderSavedBillsList;
+window.reprintSavedBill = reprintSavedBill;
+window.shareSavedBillPDF = shareSavedBillPDF;
+window.updateBusinessProfile = updateBusinessProfile;
+window.addAuthorizedStaff = addAuthorizedStaff;
+window.removeStaffMember = removeStaffMember;
+window.copyProfileCode = copyProfileCode;
+window.shareProfileCodeWA = shareProfileCodeWA;
+window.saveGHSCloudConfig = saveGHSCloudConfig;
+window.exportBackupJSON = exportBackupJSON;
+window.triggerRestoreInput = triggerRestoreInput;
+window.handleRestoreJSON = handleRestoreJSON;
+window.setAppTheme = setAppTheme;
+window.openScanner = openScanner;
+window.syncWithCloud = syncWithCloud;
+window.pullFromCloud = pullFromCloud;

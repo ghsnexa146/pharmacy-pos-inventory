@@ -21,11 +21,60 @@
       <h2>PharmaPOS Pro</h2>
       <p>Smart Pharmacy & Inventory Terminal</p>
       <div class="splash-loader"><span></span></div>
-      <div class="splash-footer">Design by <strong>D Hossain</strong> • ঘুম হীন স্বপ্ন</div>
+      <div class="splash-footer">Designed by <strong>D. Hossain</strong> • ঘুম হীন স্বপ্ন</div>
     </div>
   </div>
 
-  <!-- 1. ONBOARDING / REGISTRATION & MULTI-USER LOGIN SCREEN -->
+  <!-- HARD UN-DISMISSABLE CENTRAL LICENSE LOCK OVERLAY -->
+  <div id="license-lock-overlay" class="license-lock-screen" style="display:none;">
+    <div class="license-lock-card">
+      <div class="lock-pulse-icon">
+        <i class="fa-solid fa-shield-halved"></i>
+      </div>
+      <span class="lock-status-pill" id="lock-status-badge">APPROVAL REQUIRED</span>
+      <h2>Invalid License Key</h2>
+      <p class="lock-desc">
+        This store terminal is currently unverified or pending activation. Please contact the developer with your <strong>Store Profile ID</strong> to approve and unlock your license.
+      </p>
+
+      <div class="lock-store-box">
+        <span>YOUR STORE PROFILE ID</span>
+        <div class="lock-id-row">
+          <strong id="lock-display-store-id">GHS-000000</strong>
+          <button type="button" onclick="copyLockedStoreId()" class="btn-copy-lock" title="Copy Store ID">
+            <i class="fa-regular fa-copy"></i> Copy
+          </button>
+        </div>
+        <small id="lock-display-store-name">Store Name</small>
+      </div>
+
+      <div class="lock-dev-card">
+        <div class="lock-dev-info">
+          <strong>D. Hossain</strong>
+          <span>ঘুম হীন স্বপ্ন • Lead App Developer</span>
+        </div>
+        <div class="lock-dev-actions">
+          <a id="lock-wa-btn" href="https://wa.me/916909998882" target="_blank" class="btn-whatsapp full-width">
+            <i class="fa-brands fa-whatsapp"></i> Contact Developer (+91 6909998882)
+          </a>
+          <a href="https://ghum-heen-shopno.online/" target="_blank" class="btn-secondary full-width mt-2">
+            <i class="fa-solid fa-globe"></i> ghum-heen-shopno.online
+          </a>
+        </div>
+      </div>
+
+      <div class="lock-footer-actions">
+        <button type="button" id="btn-recheck-license" onclick="verifyCentralLicenseStatus(true)" class="btn-primary full-width">
+          <i class="fa-solid fa-rotate"></i> Check Approval Status
+        </button>
+        <button type="button" onclick="logoutCurrentSession(true)" class="btn-ghost full-width mt-2">
+          <i class="fa-solid fa-right-from-bracket"></i> Switch / Logout Store
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 1. ONBOARDING / REGISTRATION & CLEAN LOGIN SCREEN -->
   <div id="setup-screen" class="screen">
     <div class="setup-card">
       <div class="brand-header">
@@ -34,16 +83,16 @@
           <div class="fallback-logo"><i class="fa-solid fa-store"></i></div>
         </div>
         <h2>Pharmacy Terminal Setup</h2>
-        <p>Create a new store profile or login as Owner / Staff</p>
+        <p>Create a new store profile or login to existing terminal</p>
       </div>
 
-      <!-- Mode Switcher: New Store vs Multi-Device / Staff Login -->
+      <!-- Mode Switcher: New Store vs Existing Login -->
       <div class="onboarding-tabs">
         <button type="button" class="onb-tab active" id="onb-btn-new" onclick="switchOnboardingMode('new')">
           <i class="fa-solid fa-plus-circle"></i> New Store
         </button>
         <button type="button" class="onb-tab" id="onb-btn-restore" onclick="switchOnboardingMode('restore')">
-          <i class="fa-solid fa-right-to-bracket"></i> Existing / Staff
+          <i class="fa-solid fa-right-to-bracket"></i> Existing Login
         </button>
       </div>
 
@@ -80,6 +129,12 @@
         <div class="input-floating">
           <input type="email" id="reg-email" placeholder=" " />
           <label>Email Address (Optional)</label>
+        </div>
+
+        <div class="form-section-divider">Admin Security PIN</div>
+        <div class="input-floating">
+          <input type="password" id="reg-admin-pin" maxlength="6" inputmode="numeric" pattern="[0-9]*" placeholder=" " />
+          <label>Create 6-Digit Admin Security PIN *</label>
         </div>
 
         <div class="form-section-divider">Location Details</div>
@@ -123,20 +178,23 @@
           </div>
         </div>
 
-        <div class="form-section-divider">GHS Cloud Sync Link (Optional)</div>
-        <div class="input-floating">
-          <input type="url" id="reg-cloud-url" placeholder=" " />
-          <label>GHS Cloud Database URL (Optional)</label>
-        </div>
-
-        <button type="button" onclick="handleInitialSetup(event)" class="btn-primary full-width shadow mt-3 py-12">Create Store & Launch</button>
+        <button type="button" onclick="handleInitialSetup(event)" class="btn-primary full-width shadow mt-3 py-12">Create Store & Request Approval</button>
       </form>
 
-      <!-- MODE B: MULTI-DEVICE OWNER / STAFF LOGIN -->
+      <!-- MODE B: CLEAN EXISTING LOGIN (ADMINISTRATOR & STAFF) -->
       <div id="restore-code-box" style="display:none;">
-        <div class="recovery-info-box">
-          <i class="fa-solid fa-user-shield"></i>
-          <p>Enter your <strong>Unique Store ID</strong> and registered <strong>Mobile Number</strong> (Owner or Authorized Staff) to connect.</p>
+        <div class="role-login-tabs">
+          <button type="button" class="role-tab active" id="role-tab-admin" onclick="switchLoginRoleTab('admin')">
+            <i class="fa-solid fa-user-tie"></i> Administrator Login
+          </button>
+          <button type="button" class="role-tab" id="role-tab-staff" onclick="switchLoginRoleTab('staff')">
+            <i class="fa-solid fa-user-nurse"></i> Staff Login
+          </button>
+        </div>
+
+        <div class="recovery-info-box" id="login-role-hint">
+          <i class="fa-solid fa-shield-halved"></i>
+          <p><strong>Administrator Login:</strong> Enter Store Profile ID, Owner Mobile Number, and 6-Digit Admin PIN. Cloud data syncs automatically.</p>
         </div>
 
         <div class="input-floating">
@@ -146,25 +204,25 @@
 
         <div class="input-floating mt-2">
           <input type="tel" id="login-mobile-no" maxlength="10" placeholder=" " />
-          <label>Owner or Staff Mobile Number *</label>
+          <label id="login-mobile-label">Administrator Mobile Number *</label>
         </div>
 
-        <div class="input-floating mt-2">
-          <input type="url" id="login-cloud-url" placeholder=" " />
-          <label>GHS Cloud Database URL (Required for Cloud Login)</label>
-        </div>
-
-        <div class="form-section-divider">Or Paste Quick Setup Key</div>
-        <div class="input-floating">
-          <input type="text" id="recover-profile-code" placeholder=" " style="font-family: monospace; font-size: 12px;" />
-          <label>Paste Setup Sync Key (Optional shortcut)</label>
+        <!-- 6-Digit PIN Field (Only shown for Administrator Login) -->
+        <div class="input-floating mt-2" id="login-pin-wrapper">
+          <input type="password" id="login-admin-pin" maxlength="6" inputmode="numeric" placeholder=" " />
+          <label>6-Digit Admin Security PIN *</label>
         </div>
 
         <div id="recovery-error-msg" class="error-banner" style="display:none;"></div>
 
         <button type="button" id="btn-verify-login" onclick="handleMultiUserLogin()" class="btn-primary full-width shadow mt-3 py-12">
-          <i class="fa-solid fa-unlock-keyhole"></i> Verify & Login Terminal
+          <i class="fa-solid fa-unlock-keyhole"></i> Verify & Login Administrator
         </button>
+      </div>
+
+      <!-- CLEAN FOOTER ATTRIBUTION -->
+      <div class="setup-brand-footer">
+        Designed by <strong>D. Hossain</strong>
       </div>
     </div>
   </div>
@@ -472,10 +530,10 @@
           <p>Tap any section below to expand</p>
         </div>
 
-        <!-- Accordion 1: Business Profile & Invoice Serial -->
+        <!-- Accordion 1: Business Profile, Admin PIN & Invoice Serial -->
         <div class="accordion-card">
           <button class="accordion-header" onclick="toggleAccordion(this)">
-            <span><i class="fa-solid fa-store text-purple"></i> Business Profile & Invoice No.</span>
+            <span><i class="fa-solid fa-store text-purple"></i> Business Profile, PIN & Invoice No.</span>
             <i class="fa-solid fa-chevron-down arrow"></i>
           </button>
           <div class="accordion-body">
@@ -509,9 +567,15 @@
                 <label>WhatsApp Number</label>
               </div>
             </div>
-            <div class="input-floating mt-2">
-              <input type="email" id="edit-email" placeholder=" " />
-              <label>Email Address</label>
+            <div class="form-row mt-2">
+              <div class="input-floating">
+                <input type="email" id="edit-email" placeholder=" " />
+                <label>Email Address</label>
+              </div>
+              <div class="input-floating">
+                <input type="password" id="edit-admin-pin" maxlength="6" inputmode="numeric" placeholder=" " />
+                <label>6-Digit Admin PIN</label>
+              </div>
             </div>
             <div class="input-floating mt-2">
               <input type="text" id="edit-addr1" placeholder=" " />
@@ -586,7 +650,7 @@
             <i class="fa-solid fa-chevron-down arrow"></i>
           </button>
           <div class="accordion-body">
-            <p class="section-subtext mb-2">Use this Unique Store ID + Phone Number (or scan QR) to login on another mobile or desktop:</p>
+            <p class="section-subtext mb-2">Share this Unique Store ID & Mobile Number to login on any other phone or PC automatically:</p>
             <div class="profile-code-box">
               <div class="unique-id-pill">
                 <span>UNIQUE STORE ID</span>
@@ -597,7 +661,7 @@
               </div>
               <div class="qr-action-stack mt-3">
                 <button class="btn-primary full-width" onclick="copyProfileCode()">
-                  <i class="fa-regular fa-copy"></i> Copy Setup Key
+                  <i class="fa-regular fa-copy"></i> Copy Store ID
                 </button>
                 <button class="btn-whatsapp full-width" onclick="shareProfileCodeWA()">
                   <i class="fa-brands fa-whatsapp"></i> Send Login Details to WhatsApp
@@ -607,14 +671,14 @@
           </div>
         </div>
 
-        <!-- Accordion 4: GHS Cloud Sync (Manual Configuration) -->
+        <!-- Accordion 4: Store GHS Cloud Sync (One-Time Setup) -->
         <div class="accordion-card">
           <button class="accordion-header" onclick="toggleAccordion(this)">
-            <span><i class="fa-solid fa-cloud text-blue"></i> GHS Cloud Sync</span>
+            <span><i class="fa-solid fa-cloud text-blue"></i> Store GHS Cloud Sync</span>
             <i class="fa-solid fa-chevron-down arrow"></i>
           </button>
           <div class="accordion-body">
-            <p class="section-subtext mb-2">Manually link your GHS Cloud Database credentials for real-time multi-device sync:</p>
+            <p class="section-subtext mb-2">One-time setup: Link the store's personal GHS Cloud Database. Once saved, it syncs automatically on all devices:</p>
             <div class="input-floating">
               <input type="url" id="ghs-cloud-url" placeholder=" " />
               <label>GHS Cloud Database URL *</label>
@@ -630,7 +694,7 @@
           </div>
         </div>
 
-        <!-- Accordion 5: Offline Backup & Restore (Fixed File Picker) -->
+        <!-- Accordion 5: Offline Backup & Restore -->
         <div class="accordion-card">
           <button class="accordion-header" onclick="toggleAccordion(this)">
             <span><i class="fa-solid fa-download text-orange"></i> Offline Data Backup & Restore</span>
@@ -688,7 +752,7 @@
             </div>
             <div>
               <span class="dev-role-pill">LEAD APP DEVELOPER</span>
-              <h4>D Hossain</h4>
+              <h4>D. Hossain</h4>
               <p>ঘুম হীন স্বপ্ন • Digital Architecture & POS Solutions</p>
             </div>
           </div>
@@ -708,6 +772,10 @@
               <a href="https://ghum-heen-shopno.online/" target="_blank" class="mini-btn web"><i class="fa-solid fa-arrow-up-right-from-square"></i> Visit</a>
             </div>
           </div>
+        </div>
+
+        <div class="app-bottom-credit">
+          Designed & Developed by <strong>D. Hossain</strong>
         </div>
       </section>
 
@@ -877,6 +945,7 @@
   <!-- PRINTABLE A4 INVOICE CONTAINER -->
   <div id="a4-invoice-area" class="print-only"></div>
 
-  <script src="app.js"></script>
+  <!-- FIREBASE MODULAR SDK FOR CENTRAL LICENSE SERVER -->
+  <script type="module" src="app.js"></script>
 </body>
 </html>
