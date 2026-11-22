@@ -7,7 +7,6 @@
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
 
@@ -241,13 +240,13 @@
           <span class="badge-online"><i class="fa-solid fa-circle"></i> <span id="display-role-badge">Admin Mode</span></span>
         </div>
       </div>
-      <div class="top-actions">
-        <span id="sync-status-pill" class="sync-pill" title="GHS Cloud Sync Status"><i class="fa-solid fa-check"></i> Synced</span>
-        <button class="btn-icon sync-btn" id="manual-sync-btn" onclick="syncWithCloud(true)" title="Sync GHS Cloud Data">
-          <i class="fa-solid fa-cloud-arrow-up"></i>
+      <div class="top-actions" style="gap: 10px;">
+        <span id="sync-status-pill" class="sync-pill" title="Live Auto-Sync Status"><i class="fa-solid fa-circle-check"></i> Live</span>
+        <button class="btn-icon sync-btn" id="manual-sync-btn" onclick="manualFullSyncRefresh()" title="Auto-Sync & Refresh Data" style="background: var(--primary-light); color: var(--primary); border-color: #bfdbfe;">
+          <i class="fa-solid fa-arrows-rotate"></i>
         </button>
-        <button class="btn-icon" id="staff-logout-btn" style="display:none; color:var(--red);" onclick="logoutCurrentSession()" title="Logout Staff">
-          <i class="fa-solid fa-right-from-bracket"></i>
+        <button id="staff-logout-btn" style="display:none; background:#fee2e2; color:#dc2626; border:1px solid #fecaca; padding:7px 13px; border-radius:10px; font-size:12px; font-weight:700; align-items:center; gap:6px; cursor:pointer;" onclick="logoutCurrentSession()" title="Logout Staff">
+          <i class="fa-solid fa-right-from-bracket"></i> <span>Logout</span>
         </button>
       </div>
     </header>
@@ -264,7 +263,7 @@
           <div class="banner-date"><i class="fa-regular fa-calendar-days"></i> <span id="current-date-display"></span></div>
         </div>
 
-        <!-- KPI Metrics Grid -->
+        <!-- Core Live KPI Metrics Grid -->
         <div class="kpi-grid">
           <div class="kpi-card" onclick="switchTab('stock')">
             <div class="kpi-icon bg-purple"><i class="fa-solid fa-boxes-stacked"></i></div>
@@ -304,6 +303,51 @@
             <span id="alert-summary-desc">Tap to review expired & soon-to-expire medicines</span>
           </div>
           <i class="fa-solid fa-chevron-right"></i>
+        </div>
+
+        <!-- PERIOD ANALYTICS FILTER SECTION (ABOVE QUICK OPERATIONS) -->
+        <div class="analytics-filter-section">
+          <div class="section-header" style="margin-bottom: 10px;">
+            <h3>Sales & Stock Activity</h3>
+            <span class="period-active-tag" id="period-active-badge">Today</span>
+          </div>
+
+          <div class="time-filter-bar" role="tablist">
+            <button type="button" class="time-pill active" data-period="today" onclick="setDashboardPeriod('today', this)">Today</button>
+            <button type="button" class="time-pill" data-period="yesterday" onclick="setDashboardPeriod('yesterday', this)">Yesterday</button>
+            <button type="button" class="time-pill" data-period="7days" onclick="setDashboardPeriod('7days', this)">Last 7 Days</button>
+            <button type="button" class="time-pill" data-period="30days" onclick="setDashboardPeriod('30days', this)">Last 30 Days</button>
+            <button type="button" class="time-pill" data-period="lifetime" onclick="setDashboardPeriod('lifetime', this)">Lifetime</button>
+          </div>
+
+          <div class="activity-metrics-grid">
+            <div class="activity-card sales-card" onclick="openSavedBillsModal()">
+              <div class="act-top">
+                <span class="act-badge green"><i class="fa-solid fa-indian-rupee-sign"></i></span>
+                <span class="act-title">Sales Revenue</span>
+              </div>
+              <strong class="act-val" id="period-sales-amt">₹0.00</strong>
+              <span class="act-sub" id="period-sales-bills">0 Bills Generated</span>
+            </div>
+
+            <div class="activity-card in-card" onclick="switchTab('stock')">
+              <div class="act-top">
+                <span class="act-badge blue"><i class="fa-solid fa-arrow-trend-up"></i></span>
+                <span class="act-title">Stock Added</span>
+              </div>
+              <strong class="act-val" id="period-stock-in">0 Packs</strong>
+              <span class="act-sub" id="period-stock-in-sub">0 Entries</span>
+            </div>
+
+            <div class="activity-card out-card" onclick="openSavedBillsModal()">
+              <div class="act-top">
+                <span class="act-badge orange"><i class="fa-solid fa-arrow-trend-down"></i></span>
+                <span class="act-title">Stock Deducted</span>
+              </div>
+              <strong class="act-val" id="period-stock-out">0 Packs</strong>
+              <span class="act-sub" id="period-stock-out-sub">0 Pcs Sold</span>
+            </div>
+          </div>
         </div>
 
         <!-- Modern 2-Column Quick Actions -->
@@ -490,9 +534,14 @@
             <h3>Inventory Manager</h3>
             <p>Live stock packs, units & expiry tracker</p>
           </div>
-          <button class="btn-primary sm shadow" onclick="openAddStockModal('new')">
-            <i class="fa-solid fa-plus"></i> Add Item
-          </button>
+          <div class="row-join">
+            <button class="btn-whatsapp sm shadow" onclick="exportAllStockPDF()" title="Export Complete Stock List as PDF & Share">
+              <i class="fa-solid fa-file-pdf"></i> Stock PDF
+            </button>
+            <button class="btn-primary sm shadow" onclick="openAddStockModal('new')">
+              <i class="fa-solid fa-plus"></i> Add Item
+            </button>
+          </div>
         </div>
 
         <!-- Stock Category Filter Pills -->
@@ -643,28 +692,22 @@
           </div>
         </div>
 
-        <!-- Accordion 3: Multi-Device Setup & QR -->
+        <!-- Accordion 3: Multi-Device Setup (CLEAN STORE ID & COPY ONLY) -->
         <div class="accordion-card">
           <button class="accordion-header" onclick="toggleAccordion(this)">
-            <span><i class="fa-solid fa-qrcode text-purple"></i> Multi-Device Setup & QR</span>
+            <span><i class="fa-solid fa-id-card text-purple"></i> Store Profile ID</span>
             <i class="fa-solid fa-chevron-down arrow"></i>
           </button>
           <div class="accordion-body">
-            <p class="section-subtext mb-2">Share this Unique Store ID & Mobile Number to login on any other phone or PC automatically:</p>
+            <p class="section-subtext mb-2">Use this Unique Store ID & Mobile Number to login on any other phone or PC automatically:</p>
             <div class="profile-code-box">
               <div class="unique-id-pill">
                 <span>UNIQUE STORE ID</span>
                 <strong id="display-unique-profile-id">GHS-000000</strong>
               </div>
-              <div class="qr-wrapper mt-2">
-                <div id="profile-qr-container"></div>
-              </div>
               <div class="qr-action-stack mt-3">
                 <button class="btn-primary full-width" onclick="copyProfileCode()">
                   <i class="fa-regular fa-copy"></i> Copy Store ID
-                </button>
-                <button class="btn-whatsapp full-width" onclick="shareProfileCodeWA()">
-                  <i class="fa-brands fa-whatsapp"></i> Send Login Details to WhatsApp
                 </button>
               </div>
             </div>
@@ -678,7 +721,7 @@
             <i class="fa-solid fa-chevron-down arrow"></i>
           </button>
           <div class="accordion-body">
-            <p class="section-subtext mb-2">One-time setup: Link the store's personal GHS Cloud Database. Once saved, it syncs automatically on all devices:</p>
+            <p class="section-subtext mb-2">One-time setup: Link the store's personal GHS Cloud Database. Once saved, it syncs automatically in real-time on all devices:</p>
             <div class="input-floating">
               <input type="url" id="ghs-cloud-url" placeholder=" " />
               <label>GHS Cloud Database URL *</label>

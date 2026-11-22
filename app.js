@@ -17,6 +17,7 @@ const masterDb = getFirestore(masterApp);
 const DB_KEYS = {
   PROFILE: 'retailer_biz_profile',
   STOCK: 'retailer_stock_list',
+  STOCK_LOGS: 'retailer_stock_logs',
   SALES: 'retailer_sales_list',
   ORDERS: 'retailer_purchase_orders',
   STAFF: 'retailer_staff_list',
@@ -24,14 +25,17 @@ const DB_KEYS = {
   CLOUD_CFG: 'retailer_ghs_cloud_cfg',
   SESSION: 'retailer_active_session',
   THEME: 'retailer_app_theme',
-  LICENSE_APPROVED: 'retailer_central_license_approved'
+  LICENSE_APPROVED: 'retailer_central_license_approved',
+  LAST_SYNC_TS: 'retailer_last_sync_ts'
 };
 
 let cart = [];
 let currentStockFilter = 'all';
+let currentDashboardPeriod = 'today';
 let activeTabName = 'home';
 let currentLoginRole = 'admin';
 let unsubscribeLicenseListener = null;
+let autoSyncIntervalId = null;
 
 document.addEventListener('DOMContentLoaded', () => {
   const savedTheme = localStorage.getItem(DB_KEYS.THEME) || 'colorful';
@@ -81,6 +85,73 @@ document.addEventListener('DOMContentLoaded', () => {
   setupBackNavigationHandler();
   protectLicenseOverlayDOM();
 });
+
+/* ==================== REAL-TIME AUTO-SYNC ENGINE (EVERY 5 SECONDS) ==================== */
+function startRealTimeAutoSync() {
+  if (autoSyncIntervalId) clearInterval(autoSyncIntervalId);
+
+  autoSyncIntervalId = setInterval(async () => {
+    const cloudCfg = JSON.parse(localStorage.getItem(DB_KEYS.CLOUD_CFG) || '{}');
+    const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE) || 'null');
+    if (!cloudCfg.url || !profile || !profile.profileId) return;
+
+    try {
+      const baseUrl = normalizeCloudBaseUrl(cloudCfg.url);
+      const authParam = cloudCfg.secret ? `?auth=${encodeURIComponent(cloudCfg.secret)}` : '';
+      const res = await fetch(`${baseUrl}/stores/${encodeURIComponent(profile.profileId)}.json${authParam}`);
+      if (!res.ok) return;
+      const remoteData = await res.json();
+      if (!remoteData || !remoteData.profile || !remoteData.updatedAt) return;
+
+      const localLastSync = localStorage.getItem(DB_KEYS.LAST_SYNC_TS) || '';
+      if (remoteData.updatedAt !== localLastSync) {
+        localStorage.setItem(DB_KEYS.LAST_SYNC_TS, remoteData.updatedAt);
+        localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(remoteData.profile));
+        if (remoteData.stock) localStorage.setItem(DB_KEYS.STOCK, JSON.stringify(remoteData.stock));
+        if (remoteData.stockLogs) localStorage.setItem(DB_KEYS.STOCK_LOGS, JSON.stringify(remoteData.stockLogs));
+        if (remoteData.sales) localStorage.setItem(DB_KEYS.SALES, JSON.stringify(remoteData.sales));
+        if (remoteData.orders) localStorage.setItem(DB_KEYS.ORDERS, JSON.stringify(remoteData.orders));
+        if (remoteData.staff) localStorage.setItem(DB_KEYS.STAFF, JSON.stringify(remoteData.staff));
+        if (remoteData.invSeq) localStorage.setItem(DB_KEYS.INV_SEQ, remoteData.invSeq);
+
+        refreshDashboard();
+        renderStockList();
+        renderOrdersList();
+        populateBillingDropdown();
+        updateNextInvPreview();
+        renderStaffList();
+
+        const pill = document.getElementById('sync-status-pill');
+        if (pill) {
+          pill.className = 'sync-pill done';
+          pill.innerHTML = '<i class="fa-solid fa-bolt"></i> Auto-Synced';
+          setTimeout(() => { pill.style.display = 'none'; }, 2200);
+        }
+      }
+    } catch (err) {
+      // অফলাইন থাকলে চুপচাপ স্কিপ করবে
+    }
+  }, 5000);
+}
+
+async function manualFullSyncRefresh() {
+  const btnIcon = document.querySelector('#manual-sync-btn i');
+  if (btnIcon) btnIcon.classList.add('fa-spin');
+  showToast('Syncing & refreshing store data...');
+
+  try {
+    await pullFromCloud(false);
+    await syncWithCloud(false);
+    refreshDashboard();
+    renderStockList();
+    renderOrdersList();
+    populateBillingDropdown();
+    updateNextInvPreview();
+    showToast('All data synced & up-to-date!');
+  } finally {
+    if (btnIcon) setTimeout(() => btnIcon.classList.remove('fa-spin'), 500);
+  }
+}
 
 /* ==================== CENTRAL LICENSE APPROVAL & AUTO-CONFIG SYNC ==================== */
 async function registerStoreForCentralApproval(profile) {
@@ -352,6 +423,10 @@ function logoutCurrentSession(skipConfirm = false) {
     unsubscribeLicenseListener();
     unsubscribeLicenseListener = null;
   }
+  if (autoSyncIntervalId) {
+    clearInterval(autoSyncIntervalId);
+    autoSyncIntervalId = null;
+  }
   hideHardLicenseLock();
   localStorage.removeItem(DB_KEYS.SESSION);
   localStorage.removeItem(DB_KEYS.PROFILE);
@@ -442,25 +517,7 @@ function setAppTheme(themeName, notify = true) {
   if (notify) showToast(`Theme changed to ${themeName.toUpperCase()}`);
 }
 
-/* ==================== QR & STORE SHARE HELPER ==================== */
-function renderProfileQR(profile) {
-  const qrBox = document.getElementById('profile-qr-container');
-  if (!qrBox) return;
-
-  qrBox.innerHTML = '';
-  const qrText = `STORE_ID:${profile.profileId}|OWNER:${profile.phone}`;
-  if (typeof QRCode !== 'undefined') {
-    new QRCode(qrBox, {
-      text: qrText,
-      width: 148,
-      height: 148,
-      colorDark: '#0f172a',
-      colorLight: '#ffffff',
-      correctLevel: QRCode.CorrectLevel.M
-    });
-  }
-}
-
+/* ==================== COPY STORE ID HELPER ==================== */
 function copyProfileCode() {
   const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
   const idText = profile.profileId || '';
@@ -468,17 +525,6 @@ function copyProfileCode() {
     navigator.clipboard.writeText(idText);
   }
   showToast(`Store ID ${idText} copied!`);
-}
-
-function shareProfileCodeWA() {
-  const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
-  const msg = encodeURIComponent(
-    `*${profile.bizName} - Terminal Login Details*\n\n` +
-    `• *Store Profile ID:* ${profile.profileId}\n` +
-    `• *Admin Mobile:* ${profile.phone}\n\n` +
-    `Open PharmaPOS Pro > Existing Login and enter your Store ID & Mobile Number to connect automatically.`
-  );
-  window.open(`https://wa.me/?text=${msg}`, '_blank');
 }
 
 /* ==================== CLEAN ZERO-CONFIG MULTI-USER LOGIN ==================== */
@@ -563,20 +609,17 @@ async function handleMultiUserLogin() {
   btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Syncing & Verifying...';
 
   try {
-    // 1. Automatically fetch Store Metadata & Saved Cloud Config from Central Registry
     const centralSnap = await getDoc(doc(masterDb, "license_requests", profileId));
     let centralData = centralSnap.exists() ? centralSnap.data() : null;
 
     const localProfile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE) || 'null');
     const savedCloudCfg = JSON.parse(localStorage.getItem(DB_KEYS.CLOUD_CFG) || '{}');
 
-    // Automatically resolve Store's Cloud URL without asking user
     const autoCloudUrl = (centralData && centralData.cloudUrl) || savedCloudCfg.url || '';
     const autoCloudSecret = (centralData && centralData.cloudSecret) || savedCloudCfg.secret || '';
 
     let storeData = null;
 
-    // 2. If Store has a configured Cloud Database, pull live inventory/sales/staff automatically
     if (autoCloudUrl) {
       try {
         const baseUrl = normalizeCloudBaseUrl(autoCloudUrl);
@@ -593,7 +636,6 @@ async function handleMultiUserLogin() {
       }
     }
 
-    // 3. Fallback to Central Registry Metadata or Local Storage if Store Cloud URL isn't set yet
     if (!storeData && centralData) {
       storeData = {
         profile: {
@@ -630,7 +672,6 @@ async function handleMultiUserLogin() {
     const remoteStaff = storeData.staff || (centralData && centralData.staffList) || [];
     let sessionObj = null;
 
-    // 4. Verify Credentials based on Selected Role
     if (currentLoginRole === 'admin') {
       const isOwnerPhone = (remoteProfile.phone === mobileNo || remoteProfile.whatsapp === mobileNo);
       if (!isOwnerPhone) {
@@ -648,16 +689,17 @@ async function handleMultiUserLogin() {
       sessionObj = { role: 'staff', name: matchedStaff.name, phone: matchedStaff.phone };
     }
 
-    // 5. Save Cloud Config & All Store Data Automatically
     if (autoCloudUrl) {
       localStorage.setItem(DB_KEYS.CLOUD_CFG, JSON.stringify({ url: autoCloudUrl, secret: autoCloudSecret }));
     }
     localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(remoteProfile));
     if (storeData.stock) localStorage.setItem(DB_KEYS.STOCK, JSON.stringify(storeData.stock));
+    if (storeData.stockLogs) localStorage.setItem(DB_KEYS.STOCK_LOGS, JSON.stringify(storeData.stockLogs));
     if (storeData.sales) localStorage.setItem(DB_KEYS.SALES, JSON.stringify(storeData.sales));
     if (storeData.orders) localStorage.setItem(DB_KEYS.ORDERS, JSON.stringify(storeData.orders));
     if (remoteStaff.length > 0) localStorage.setItem(DB_KEYS.STAFF, JSON.stringify(remoteStaff));
     if (storeData.invSeq) localStorage.setItem(DB_KEYS.INV_SEQ, storeData.invSeq);
+    if (storeData.updatedAt) localStorage.setItem(DB_KEYS.LAST_SYNC_TS, storeData.updatedAt);
 
     localStorage.setItem(DB_KEYS.SESSION, JSON.stringify(sessionObj));
     loadMainApp(remoteProfile);
@@ -808,7 +850,6 @@ function loadMainApp(profile) {
   if (document.getElementById('ghs-cloud-url')) document.getElementById('ghs-cloud-url').value = cloudCfg.url || '';
   if (document.getElementById('ghs-cloud-secret')) document.getElementById('ghs-cloud-secret').value = cloudCfg.secret || '';
 
-  renderProfileQR(profile);
   renderStaffList();
   updateNextInvPreview();
   refreshDashboard();
@@ -819,6 +860,7 @@ function loadMainApp(profile) {
   applyRolePermissions();
 
   attachCentralLicenseWatcher(profile);
+  startRealTimeAutoSync();
 }
 
 function switchTab(tabName) {
@@ -876,7 +918,22 @@ function setupSmartExpiryValidation() {
   });
 }
 
-/* ==================== STOCK MANAGEMENT & RESTOCK ==================== */
+/* ==================== STOCK MOVEMENT LOGGER (FOR PERIOD ANALYTICS) ==================== */
+function recordStockMovement(medName, packsAdded, unitsAdded, type = 'new') {
+  const logs = JSON.parse(localStorage.getItem(DB_KEYS.STOCK_LOGS)) || [];
+  logs.unshift({
+    id: Date.now(),
+    name: medName,
+    packs: packsAdded,
+    units: unitsAdded,
+    type: type,
+    timestamp: Date.now(),
+    date: new Date().toLocaleDateString('en-IN')
+  });
+  localStorage.setItem(DB_KEYS.STOCK_LOGS, JSON.stringify(logs));
+}
+
+/* ==================== STOCK MANAGEMENT, RESTOCK & ONE-CLICK STOCK PDF ==================== */
 function openAddStockModal(mode = 'new', preselectId = null) {
   document.getElementById('stock-modal').classList.add('active');
   setStockModalMode(mode);
@@ -942,10 +999,12 @@ document.getElementById('add-stock-form').addEventListener('submit', (e) => {
   const stockList = JSON.parse(localStorage.getItem(DB_KEYS.STOCK)) || [];
   const unitPerPack = parseInt(document.getElementById('item-unit-pack').value) || 1;
   const packs = parseInt(document.getElementById('item-packs').value) || 1;
+  const medName = document.getElementById('item-name').value.trim();
 
   const newItem = {
     id: Date.now(),
-    name: document.getElementById('item-name').value.trim(),
+    addedAt: Date.now(),
+    name: medName,
     mfg: document.getElementById('item-mfg').value.trim(),
     batch: document.getElementById('item-batch').value.trim(),
     expiry: document.getElementById('item-expiry').value.trim(),
@@ -960,6 +1019,7 @@ document.getElementById('add-stock-form').addEventListener('submit', (e) => {
 
   stockList.push(newItem);
   localStorage.setItem(DB_KEYS.STOCK, JSON.stringify(stockList));
+  recordStockMovement(medName, packs, packs * unitPerPack, 'new');
 
   e.target.reset();
   closeAddStockModal();
@@ -982,14 +1042,16 @@ document.getElementById('restock-form').addEventListener('submit', (e) => {
   if (idx === -1) return alert('Select a valid medicine batch.');
 
   const item = stockList[idx];
+  const addedUnits = addPacks * item.unitPerPack;
   const currentUnits = item.totalUnits !== undefined ? item.totalUnits : (item.packs * item.unitPerPack);
-  item.totalUnits = currentUnits + (addPacks * item.unitPerPack);
+  item.totalUnits = currentUnits + addedUnits;
   item.packs = item.totalUnits / item.unitPerPack;
   if (!isNaN(newMrp) && newMrp > 0) item.mrp = newMrp;
   if (!isNaN(newPur) && newPur > 0) item.purchaseRate = newPur;
 
   stockList[idx] = item;
   localStorage.setItem(DB_KEYS.STOCK, JSON.stringify(stockList));
+  recordStockMovement(item.name, addPacks, addedUnits, 'restock');
 
   e.target.reset();
   closeAddStockModal();
@@ -1081,6 +1143,161 @@ function renderStockList() {
       </div>
     `;
   }).join('');
+}
+
+/* ==================== EXPORT COMPLETE STOCK LIST AS PDF & SHARE ==================== */
+function buildStockReportHTML(stockList, profile) {
+  const fullAddr = formatFullAddress(profile);
+  const dateStr = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  let totalStockMRPVal = 0;
+  let totalStockPurVal = 0;
+
+  const rowsHtml = stockList.map((item, idx) => {
+    const totalUnits = item.totalUnits !== undefined ? item.totalUnits : (item.packs * item.unitPerPack);
+    const fullPacks = Math.floor(totalUnits / item.unitPerPack);
+    const looseUnits = totalUnits % item.unitPerPack;
+    const effectivePacks = totalUnits / item.unitPerPack;
+
+    const itemMrpVal = item.mrp * effectivePacks;
+    const itemPurVal = (item.purchaseRate || 0) * effectivePacks;
+    totalStockMRPVal += itemMrpVal;
+    totalStockPurVal += itemPurVal;
+
+    const st = getExpiryStatus(item.expiry);
+    const statusLabel = st === 'expired' ? 'EXPIRED' : (st === 'soon' ? 'EXPIRING SOON' : 'VALID');
+    const statusColor = st === 'expired' ? '#dc2626' : (st === 'soon' ? '#d97706' : '#16a34a');
+
+    let qtyDisplay = `${fullPacks} Pack`;
+    if (looseUnits > 0) qtyDisplay += ` + ${looseUnits} Pc`;
+    if (totalUnits <= 0) qtyDisplay = `OUT OF STOCK`;
+
+    return `
+      <tr style="border-bottom: 1px solid #e2e8f0;">
+        <td style="padding: 6px 5px; font-size: 10px; color: #475569;">${idx + 1}</td>
+        <td style="padding: 6px 5px; font-size: 11px; color: #0f172a;">
+          <strong>${item.name}</strong>
+          <div style="font-size: 9px; color: #64748b;">Mfg: ${item.mfg || '-'} • ${item.unitPerPack} Pcs/Pack</div>
+        </td>
+        <td style="padding: 6px 5px; font-size: 10px; color: #334155;">${item.batch}</td>
+        <td style="padding: 6px 5px; font-size: 10px; text-align: center;">
+          <div>${item.expiry}</div>
+          <span style="font-size: 8px; font-weight: 800; color: ${statusColor};">${statusLabel}</span>
+        </td>
+        <td style="padding: 6px 5px; font-size: 11px; text-align: center; font-weight: 700; color: #0f172a;">${qtyDisplay}</td>
+        <td style="padding: 6px 5px; font-size: 11px; text-align: right; color: #334155;">₹${(item.purchaseRate || 0).toFixed(2)}</td>
+        <td style="padding: 6px 5px; font-size: 11px; text-align: right; color: #0f172a;">₹${item.mrp.toFixed(2)}</td>
+        <td style="padding: 6px 5px; font-size: 11px; text-align: right; font-weight: 700; color: #0f172a;">₹${itemMrpVal.toFixed(2)}</td>
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #1e293b; padding: 14px 16px; width: 100%; max-width: 195mm; margin: 0 auto; background: #ffffff; box-sizing: border-box;">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #1d4ed8; padding-bottom: 10px; margin-bottom: 12px;">
+        <div>
+          <div style="font-size: 18px; font-weight: 800; color: #0f172a; text-transform: uppercase;">${profile.bizName}</div>
+          <div style="font-size: 10px; color: #475569; margin-top: 2px;">${fullAddr}</div>
+          <div style="font-size: 10px; color: #64748b; margin-top: 2px;">Phone: ${profile.phone} ${profile.dlNo ? '• DL: ' + profile.dlNo : ''}</div>
+        </div>
+        <div style="text-align: right;">
+          <h2 style="margin: 0; font-size: 16px; font-weight: 800; color: #1d4ed8; letter-spacing: 0.5px;">COMPLETE STOCK REPORT</h2>
+          <div style="font-size: 11px; font-weight: 700; color: #0f172a; margin-top: 3px;">Date: ${dateStr}</div>
+          <div style="font-size: 10px; color: #475569;">Total Medicines: ${stockList.length}</div>
+        </div>
+      </div>
+
+      <table style="width: 100%; border-collapse: collapse; margin-bottom: 14px;">
+        <thead>
+          <tr style="background: #f1f5f9; border-top: 1.5px solid #94a3b8; border-bottom: 1.5px solid #94a3b8;">
+            <th style="padding: 6px 5px; text-align: left; font-size: 9px; font-weight: 800; color: #334155;">#</th>
+            <th style="padding: 6px 5px; text-align: left; font-size: 9px; font-weight: 800; color: #334155;">MEDICINE & MFG</th>
+            <th style="padding: 6px 5px; text-align: left; font-size: 9px; font-weight: 800; color: #334155;">BATCH</th>
+            <th style="padding: 6px 5px; text-align: center; font-size: 9px; font-weight: 800; color: #334155;">EXPIRY</th>
+            <th style="padding: 6px 5px; text-align: center; font-size: 9px; font-weight: 800; color: #334155;">AVAIL. STOCK</th>
+            <th style="padding: 6px 5px; text-align: right; font-size: 9px; font-weight: 800; color: #334155;">PUR. RATE</th>
+            <th style="padding: 6px 5px; text-align: right; font-size: 9px; font-weight: 800; color: #334155;">MRP</th>
+            <th style="padding: 6px 5px; text-align: right; font-size: 9px; font-weight: 800; color: #334155;">STOCK VAL.</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+
+      <div style="display: flex; justify-content: flex-end; margin-bottom: 14px;">
+        <div style="width: 260px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 12px;">
+          <div style="display: flex; justify-content: space-between; font-size: 11px; color: #475569; margin-bottom: 4px;">
+            <span>Total Purchase Value:</span>
+            <strong>₹${totalStockPurVal.toFixed(2)}</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 13px; color: #0f172a; border-top: 1px solid #cbd5e1; padding-top: 6px;">
+            <span><strong>Total MRP Stock Value:</strong></span>
+            <strong style="color: #1d4ed8;">₹${totalStockMRPVal.toFixed(2)}</strong>
+          </div>
+        </div>
+      </div>
+
+      <div style="border-top: 1px solid #cbd5e1; padding-top: 8px; display: flex; justify-content: space-between; font-size: 9px; color: #64748b;">
+        <span>Generated by PharmaPOS Pro • Designed by D. Hossain</span>
+        <span>Store ID: <strong>${profile.profileId || ''}</strong></span>
+      </div>
+    </div>
+  `;
+}
+
+async function exportAllStockPDF() {
+  const stockList = JSON.parse(localStorage.getItem(DB_KEYS.STOCK)) || [];
+  if (stockList.length === 0) {
+    return alert('Inventory is empty. Add medicines first to export Stock PDF.');
+  }
+
+  const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || { bizName: 'Pharmacy' };
+  const htmlString = buildStockReportHTML(stockList, profile);
+
+  const tempDiv = document.createElement('div');
+  tempDiv.innerHTML = htmlString;
+  document.body.appendChild(tempDiv);
+
+  const dateTag = new Date().toISOString().slice(0, 10);
+  const cleanStoreName = (profile.bizName || 'Store').replace(/[^a-zA-Z0-9]/g, '_');
+  const fileName = `Stock_Report_${cleanStoreName}_${dateTag}.pdf`;
+
+  const opt = {
+    margin: 5,
+    filename: fileName,
+    image: { type: 'jpeg', quality: 0.98 },
+    html2canvas: { scale: 2, useCORS: true },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+  };
+
+  try {
+    if (typeof html2pdf !== 'undefined') {
+      if (window.AndroidBridge && typeof window.AndroidBridge.sharePdfBase64 === 'function') {
+        showToast('Generating Complete Stock PDF...');
+        const pdfDataUri = await html2pdf().set(opt).from(tempDiv).outputPdf('datauristring');
+        window.AndroidBridge.sharePdfBase64(pdfDataUri, fileName, '');
+      } else {
+        const pdfBlob = await html2pdf().set(opt).from(tempDiv).outputPdf('blob');
+        const pdfFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
+
+        if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+          await navigator.share({
+            files: [pdfFile],
+            title: `Complete Stock Report - ${profile.bizName}`,
+            text: `Complete Medicine Stock Report (${stockList.length} Items) - ${profile.bizName}`
+          });
+        } else {
+          await html2pdf().set(opt).from(tempDiv).save();
+          showToast('Complete Stock PDF Downloaded!');
+        }
+      }
+    } else {
+      window.print();
+    }
+  } catch (err) {
+    console.error('Stock PDF Export Error:', err);
+    showToast('Unable to generate Stock PDF.');
+  } finally {
+    document.body.removeChild(tempDiv);
+  }
 }
 
 /* ==================== ORDERS (MEDICINE REORDER LIST) ==================== */
@@ -1418,6 +1635,7 @@ function buildInvoiceHTML(saleObj, profile) {
   `;
 }
 
+/* ==================== ANDROID APK + BROWSER PDF SHARE & PRINT ==================== */
 async function shareInvoicePDF(saleObj, profile) {
   const htmlString = buildInvoiceHTML(saleObj, profile);
   const tempDiv = document.createElement('div');
@@ -1435,26 +1653,35 @@ async function shareInvoicePDF(saleObj, profile) {
 
   try {
     if (typeof html2pdf !== 'undefined') {
-      const pdfBlob = await html2pdf().set(opt).from(tempDiv).outputPdf('blob');
-      const pdfFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
-
-      if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
-        await navigator.share({
-          files: [pdfFile],
-          title: `Invoice ${saleObj.invNo}`,
-          text: `Invoice ${saleObj.invNo} from ${profile.bizName} - Total: ₹${saleObj.total.toFixed(2)}`
-        });
+      if (window.AndroidBridge && typeof window.AndroidBridge.sharePdfBase64 === 'function') {
+        showToast('Preparing PDF for WhatsApp...');
+        const pdfDataUri = await html2pdf().set(opt).from(tempDiv).outputPdf('datauristring');
+        window.AndroidBridge.sharePdfBase64(pdfDataUri, fileName, saleObj.custPhone || '');
       } else {
-        await html2pdf().set(opt).from(tempDiv).save();
-        const msg = encodeURIComponent(`*${profile.bizName}*\nInvoice: ${saleObj.invNo}\nDate: ${saleObj.date}\nCustomer: ${saleObj.custName}\nTotal: ₹${saleObj.total.toFixed(2)}`);
-        const waUrl = saleObj.custPhone ? `https://wa.me/91${saleObj.custPhone}?text=${msg}` : `https://wa.me/?text=${msg}`;
-        window.open(waUrl, '_blank');
+        const pdfBlob = await html2pdf().set(opt).from(tempDiv).outputPdf('blob');
+        const pdfFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
+
+        if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+          await navigator.share({
+            files: [pdfFile],
+            title: `Invoice ${saleObj.invNo}`,
+            text: `Invoice ${saleObj.invNo} from ${profile.bizName} - Total: ₹${saleObj.total.toFixed(2)}`
+          });
+        } else {
+          await html2pdf().set(opt).from(tempDiv).save();
+          const msg = encodeURIComponent(`*${profile.bizName}*\nInvoice: ${saleObj.invNo}\nDate: ${saleObj.date}\nCustomer: ${saleObj.custName}\nTotal: ₹${saleObj.total.toFixed(2)}`);
+          const waUrl = saleObj.custPhone ? `https://wa.me/91${saleObj.custPhone}?text=${msg}` : `https://wa.me/?text=${msg}`;
+          window.open(waUrl, '_blank');
+        }
       }
+    } else if (window.AndroidBridge && typeof window.AndroidBridge.printPage === 'function') {
+      window.AndroidBridge.printPage();
     } else {
       window.print();
     }
   } catch (err) {
     console.error('PDF Share Error:', err);
+    showToast('Unable to generate PDF.');
   } finally {
     document.body.removeChild(tempDiv);
   }
@@ -1468,12 +1695,14 @@ async function generateAndShareBill(mode) {
   const custName = document.getElementById('cust-name').value.trim() || 'Walk-in Customer';
   const custPhone = document.getElementById('cust-phone').value.trim();
   const invNo = getNextInvoiceNumber();
-  const dateStr = new Date().toLocaleDateString('en-IN');
+  const nowTs = Date.now();
+  const dateStr = new Date(nowTs).toLocaleDateString('en-IN');
 
   const totals = calculateBillTotals();
 
   const newSale = {
     invNo,
+    timestamp: nowTs,
     date: dateStr,
     custName,
     custPhone,
@@ -1502,7 +1731,11 @@ async function generateAndShareBill(mode) {
   document.getElementById('a4-invoice-area').innerHTML = buildInvoiceHTML(newSale, profile);
 
   if (mode === 'print') {
-    window.print();
+    if (window.AndroidBridge && typeof window.AndroidBridge.printPage === 'function') {
+      window.AndroidBridge.printPage();
+    } else {
+      window.print();
+    }
   } else if (mode === 'whatsapp') {
     await shareInvoicePDF(newSale, profile);
   }
@@ -1560,7 +1793,11 @@ function reprintSavedBill(index) {
   if (!saleObj) return;
   if (!saleObj.items) saleObj.items = [];
   document.getElementById('a4-invoice-area').innerHTML = buildInvoiceHTML(saleObj, profile);
-  window.print();
+  if (window.AndroidBridge && typeof window.AndroidBridge.printPage === 'function') {
+    window.AndroidBridge.printPage();
+  } else {
+    window.print();
+  }
 }
 
 async function shareSavedBillPDF(index) {
@@ -1572,7 +1809,136 @@ async function shareSavedBillPDF(index) {
   await shareInvoicePDF(saleObj, profile);
 }
 
-/* ==================== DASHBOARD & SETTINGS ==================== */
+/* ==================== DASHBOARD & PERIOD ANALYTICS ENGINE ==================== */
+function parseRecordTimestamp(record) {
+  if (record && typeof record.timestamp === 'number' && record.timestamp > 0) {
+    return record.timestamp;
+  }
+  if (record && record.date && typeof record.date === 'string') {
+    const parts = record.date.split('/');
+    if (parts.length === 3) {
+      const d = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10) - 1;
+      const y = parseInt(parts[2], 10);
+      const parsed = new Date(y, m, d, 12, 0, 0).getTime();
+      if (!isNaN(parsed)) return parsed;
+    }
+  }
+  return 0;
+}
+
+function isTimestampInPeriod(ts, period) {
+  if (period === 'lifetime') return true;
+  if (!ts) return false;
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfYesterday = startOfToday - (24 * 60 * 60 * 1000);
+
+  if (period === 'today') {
+    return ts >= startOfToday;
+  }
+  if (period === 'yesterday') {
+    return ts >= startOfYesterday && ts < startOfToday;
+  }
+  if (period === '7days') {
+    const start7Days = startOfToday - (6 * 24 * 60 * 60 * 1000);
+    return ts >= start7Days;
+  }
+  if (period === '30days') {
+    const start30Days = startOfToday - (29 * 24 * 60 * 60 * 1000);
+    return ts >= start30Days;
+  }
+  return true;
+}
+
+function setDashboardPeriod(period, btnEl) {
+  currentDashboardPeriod = period;
+  document.querySelectorAll('.time-pill').forEach(btn => btn.classList.remove('active'));
+  if (btnEl) btnEl.classList.add('active');
+
+  const labelMap = {
+    today: 'Today',
+    yesterday: 'Yesterday',
+    '7days': 'Last 7 Days',
+    '30days': 'Last 30 Days',
+    lifetime: 'Lifetime'
+  };
+  const badgeEl = document.getElementById('period-active-badge');
+  if (badgeEl) badgeEl.innerText = labelMap[period] || 'Today';
+
+  renderPeriodAnalytics();
+}
+
+function renderPeriodAnalytics() {
+  const salesList = JSON.parse(localStorage.getItem(DB_KEYS.SALES)) || [];
+  const stockLogs = JSON.parse(localStorage.getItem(DB_KEYS.STOCK_LOGS)) || [];
+  const stockList = JSON.parse(localStorage.getItem(DB_KEYS.STOCK)) || [];
+
+  // 1. Filter Sales & Stock Out
+  let periodSalesTotal = 0;
+  let periodBillsCount = 0;
+  let periodPacksOut = 0;
+  let periodUnitsOut = 0;
+
+  salesList.forEach(sale => {
+    const ts = parseRecordTimestamp(sale);
+    if (isTimestampInPeriod(ts, currentDashboardPeriod)) {
+      periodSalesTotal += (sale.total || 0);
+      periodBillsCount++;
+
+      if (Array.isArray(sale.items)) {
+        sale.items.forEach(item => {
+          const uPerPack = item.unitPerPack || 1;
+          const units = item.unitsDeducted !== undefined
+            ? item.unitsDeducted
+            : (item.unitType === 'pack' ? (item.qty || 1) * uPerPack : (item.qty || 1));
+          periodUnitsOut += units;
+          periodPacksOut += (units / uPerPack);
+        });
+      }
+    }
+  });
+
+  // 2. Filter Stock Added (Logs + Legacy Initial Stock fallback)
+  let periodPacksIn = 0;
+  let periodStockEntries = 0;
+
+  const sourceLogs = stockLogs.length > 0
+    ? stockLogs
+    : stockList.map(s => ({
+        packs: s.packs || 0,
+        units: s.totalUnits || ((s.packs || 0) * (s.unitPerPack || 1)),
+        timestamp: s.addedAt || s.id || 0
+      }));
+
+  sourceLogs.forEach(log => {
+    const ts = parseRecordTimestamp(log);
+    if (isTimestampInPeriod(ts, currentDashboardPeriod)) {
+      periodPacksIn += (log.packs || 0);
+      periodStockEntries++;
+    }
+  });
+
+  const salesAmtEl = document.getElementById('period-sales-amt');
+  const salesBillsEl = document.getElementById('period-sales-bills');
+  const stockInEl = document.getElementById('period-stock-in');
+  const stockInSubEl = document.getElementById('period-stock-in-sub');
+  const stockOutEl = document.getElementById('period-stock-out');
+  const stockOutSubEl = document.getElementById('period-stock-out-sub');
+
+  if (salesAmtEl) salesAmtEl.innerText = `₹${periodSalesTotal.toFixed(2)}`;
+  if (salesBillsEl) salesBillsEl.innerText = `${periodBillsCount} Bill${periodBillsCount === 1 ? '' : 's'}`;
+
+  const fmtPacksIn = Number.isInteger(periodPacksIn) ? periodPacksIn : periodPacksIn.toFixed(1);
+  if (stockInEl) stockInEl.innerText = `${fmtPacksIn} Packs`;
+  if (stockInSubEl) stockInSubEl.innerText = `${periodStockEntries} Batch Entry`;
+
+  const fmtPacksOut = Number.isInteger(periodPacksOut) ? periodPacksOut : periodPacksOut.toFixed(1);
+  if (stockOutEl) stockOutEl.innerText = `${fmtPacksOut} Packs`;
+  if (stockOutSubEl) stockOutSubEl.innerText = `${periodUnitsOut} Pcs Sold`;
+}
+
 function refreshDashboard() {
   const stockList = JSON.parse(localStorage.getItem(DB_KEYS.STOCK)) || [];
   const salesList = JSON.parse(localStorage.getItem(DB_KEYS.SALES)) || [];
@@ -1607,6 +1973,8 @@ function refreshDashboard() {
   } else {
     alertStrip.style.display = 'none';
   }
+
+  renderPeriodAnalytics();
 }
 
 async function updateBusinessProfile() {
@@ -1652,39 +2020,40 @@ async function saveGHSCloudConfig() {
   localStorage.setItem(DB_KEYS.CLOUD_CFG, JSON.stringify({ url, secret }));
 
   const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
-  renderProfileQR(profile);
-
-  // Automatically save cloud link to Central Registry so future logins on any device auto-connect!
   await syncStoreMetadataToCentral(profile);
 
   showToast('GHS Cloud saved & auto-linked for all logins!');
   if (url) syncWithCloud(true);
 }
 
-/* ==================== OFFLINE JSON EXPORT & RESTORE ==================== */
+/* ==================== OFFLINE JSON EXPORT & ROBUST RESTORE ==================== */
 function exportBackupJSON() {
   const backupData = {
     app: 'PharmaPOS_GHS',
-    profile: JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)),
-    stock: JSON.parse(localStorage.getItem(DB_KEYS.STOCK)) || [],
-    sales: JSON.parse(localStorage.getItem(DB_KEYS.SALES)) || [],
-    orders: JSON.parse(localStorage.getItem(DB_KEYS.ORDERS)) || [],
-    staff: JSON.parse(localStorage.getItem(DB_KEYS.STAFF)) || [],
+    profile: JSON.parse(localStorage.getItem(DB_KEYS.PROFILE) || 'null'),
+    stock: JSON.parse(localStorage.getItem(DB_KEYS.STOCK) || '[]'),
+    stockLogs: JSON.parse(localStorage.getItem(DB_KEYS.STOCK_LOGS) || '[]'),
+    sales: JSON.parse(localStorage.getItem(DB_KEYS.SALES) || '[]'),
+    orders: JSON.parse(localStorage.getItem(DB_KEYS.ORDERS) || '[]'),
+    staff: JSON.parse(localStorage.getItem(DB_KEYS.STAFF) || '[]'),
     invSeq: localStorage.getItem(DB_KEYS.INV_SEQ) || 1,
     cloudCfg: JSON.parse(localStorage.getItem(DB_KEYS.CLOUD_CFG) || '{}')
   };
   const jsonString = JSON.stringify(backupData, null, 2);
-  const blob = new Blob([jsonString], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
+  const fileName = `POS_Backup_${new Date().toISOString().slice(0, 10)}.json`;
 
-  const downloadAnchor = document.createElement('a');
-  downloadAnchor.href = url;
-  downloadAnchor.download = `POS_Backup_${new Date().toISOString().slice(0,10)}.json`;
-  document.body.appendChild(downloadAnchor);
-  downloadAnchor.click();
-  downloadAnchor.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-  showToast('Backup JSON exported!');
+  if (window.AndroidBridge && typeof window.AndroidBridge.saveJsonBackup === 'function') {
+    window.AndroidBridge.saveJsonBackup(jsonString, fileName);
+  } else {
+    const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(jsonString);
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.href = dataUri;
+    downloadAnchor.download = fileName;
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+    showToast('Backup JSON exported!');
+  }
 }
 
 function triggerRestoreInput() {
@@ -1700,30 +2069,57 @@ function handleRestoreJSON(event) {
   const fileReader = new FileReader();
   fileReader.onload = async function(e) {
     try {
-      const restored = JSON.parse(e.target.result);
-      if (!restored || typeof restored !== 'object' || (!restored.profile && !restored.stock)) {
-        throw new Error('Invalid backup structure');
+      let rawText = (e.target.result || '').trim();
+      if (rawText.charCodeAt(0) === 0xFEFF) {
+        rawText = rawText.slice(1);
       }
+      const firstBrace = rawText.indexOf('{');
+      const lastBrace = rawText.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1) {
+        rawText = rawText.substring(firstBrace, lastBrace + 1);
+      }
+
+      const restored = JSON.parse(rawText);
+      if (!restored || typeof restored !== 'object') {
+        throw new Error('Invalid JSON object');
+      }
+
+      const hasValidKeys = restored.profile || restored.stock || restored.sales || restored.orders || restored.app === 'PharmaPOS_GHS';
+      if (!hasValidKeys) {
+        throw new Error('Not a PharmaPOS backup file');
+      }
+
       if (restored.profile) {
         if (!restored.profile.profileId) restored.profile.profileId = generateUniqueStoreId();
         localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(restored.profile));
       }
-      if (restored.stock) localStorage.setItem(DB_KEYS.STOCK, JSON.stringify(restored.stock));
-      if (restored.sales) localStorage.setItem(DB_KEYS.SALES, JSON.stringify(restored.sales));
-      if (restored.orders) localStorage.setItem(DB_KEYS.ORDERS, JSON.stringify(restored.orders));
-      if (restored.staff) localStorage.setItem(DB_KEYS.STAFF, JSON.stringify(restored.staff));
+      if (Array.isArray(restored.stock)) localStorage.setItem(DB_KEYS.STOCK, JSON.stringify(restored.stock));
+      if (Array.isArray(restored.stockLogs)) localStorage.setItem(DB_KEYS.STOCK_LOGS, JSON.stringify(restored.stockLogs));
+      if (Array.isArray(restored.sales)) localStorage.setItem(DB_KEYS.SALES, JSON.stringify(restored.sales));
+      if (Array.isArray(restored.orders)) localStorage.setItem(DB_KEYS.ORDERS, JSON.stringify(restored.orders));
+      if (Array.isArray(restored.staff)) localStorage.setItem(DB_KEYS.STAFF, JSON.stringify(restored.staff));
       if (restored.invSeq) localStorage.setItem(DB_KEYS.INV_SEQ, restored.invSeq);
-      if (restored.cloudCfg) localStorage.setItem(DB_KEYS.CLOUD_CFG, JSON.stringify(restored.cloudCfg));
+      if (restored.cloudCfg && typeof restored.cloudCfg === 'object') {
+        localStorage.setItem(DB_KEYS.CLOUD_CFG, JSON.stringify(restored.cloudCfg));
+      }
 
-      const currentProfile = restored.profile || JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
-      await syncStoreMetadataToCentral(currentProfile);
-      loadMainApp(currentProfile);
+      const currentProfile = restored.profile || JSON.parse(localStorage.getItem(DB_KEYS.PROFILE) || 'null');
+      if (currentProfile && currentProfile.bizName) {
+        await syncStoreMetadataToCentral(currentProfile);
+        loadMainApp(currentProfile);
+      } else {
+        refreshDashboard();
+        renderStockList();
+        renderOrdersList();
+        populateBillingDropdown();
+      }
       showToast('Database restored successfully!');
     } catch (err) {
-      alert('Invalid backup file! Please select a valid POS_Backup JSON file.');
+      console.error('Restore Error:', err);
+      alert('Invalid backup file! Please select a valid PharmaPOS JSON backup file.');
     }
   };
-  fileReader.readAsText(file);
+  fileReader.readAsText(file, 'UTF-8');
 }
 
 function openScanner() { showToast('Camera Barcode Scanner ready.'); }
@@ -1745,10 +2141,12 @@ async function syncWithCloud(isManual = false) {
     pill.innerHTML = '<i class="fa-solid fa-rotate fa-spin"></i> Syncing';
   }
 
+  const nowIso = new Date().toISOString();
   const payload = {
-    updatedAt: new Date().toISOString(),
+    updatedAt: nowIso,
     profile: profile,
     stock: JSON.parse(localStorage.getItem(DB_KEYS.STOCK)) || [],
+    stockLogs: JSON.parse(localStorage.getItem(DB_KEYS.STOCK_LOGS)) || [],
     sales: JSON.parse(localStorage.getItem(DB_KEYS.SALES)) || [],
     orders: JSON.parse(localStorage.getItem(DB_KEYS.ORDERS)) || [],
     staff: JSON.parse(localStorage.getItem(DB_KEYS.STAFF)) || [],
@@ -1765,6 +2163,7 @@ async function syncWithCloud(isManual = false) {
     });
 
     if (!res.ok) throw new Error('Cloud write rejected');
+    localStorage.setItem(DB_KEYS.LAST_SYNC_TS, nowIso);
 
     if (pill) {
       pill.className = 'sync-pill done';
@@ -1802,10 +2201,12 @@ async function pullFromCloud(isManual = false, overrideId = null, overrideUrl = 
     if (data && data.profile) {
       localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(data.profile));
       if (data.stock) localStorage.setItem(DB_KEYS.STOCK, JSON.stringify(data.stock));
+      if (data.stockLogs) localStorage.setItem(DB_KEYS.STOCK_LOGS, JSON.stringify(data.stockLogs));
       if (data.sales) localStorage.setItem(DB_KEYS.SALES, JSON.stringify(data.sales));
       if (data.orders) localStorage.setItem(DB_KEYS.ORDERS, JSON.stringify(data.orders));
       if (data.staff) localStorage.setItem(DB_KEYS.STAFF, JSON.stringify(data.staff));
       if (data.invSeq) localStorage.setItem(DB_KEYS.INV_SEQ, data.invSeq);
+      if (data.updatedAt) localStorage.setItem(DB_KEYS.LAST_SYNC_TS, data.updatedAt);
       loadMainApp(data.profile);
       if (isManual) showToast('Latest cloud data pulled!');
     } else if (isManual) {
@@ -1826,6 +2227,7 @@ window.copyLockedStoreId = copyLockedStoreId;
 window.logoutCurrentSession = logoutCurrentSession;
 window.switchTab = switchTab;
 window.openExpiringTab = openExpiringTab;
+window.setDashboardPeriod = setDashboardPeriod;
 window.toggleAccordion = toggleAccordion;
 window.openAddStockModal = openAddStockModal;
 window.closeAddStockModal = closeAddStockModal;
@@ -1833,6 +2235,7 @@ window.setStockModalMode = setStockModalMode;
 window.showRestockCurrentInfo = showRestockCurrentInfo;
 window.setStockFilter = setStockFilter;
 window.renderStockList = renderStockList;
+window.exportAllStockPDF = exportAllStockPDF;
 window.quickAddToOrder = quickAddToOrder;
 window.addMedicineOrder = addMedicineOrder;
 window.deleteOrderItem = deleteOrderItem;
@@ -1854,7 +2257,6 @@ window.updateBusinessProfile = updateBusinessProfile;
 window.addAuthorizedStaff = addAuthorizedStaff;
 window.removeStaffMember = removeStaffMember;
 window.copyProfileCode = copyProfileCode;
-window.shareProfileCodeWA = shareProfileCodeWA;
 window.saveGHSCloudConfig = saveGHSCloudConfig;
 window.exportBackupJSON = exportBackupJSON;
 window.triggerRestoreInput = triggerRestoreInput;
@@ -1863,3 +2265,4 @@ window.setAppTheme = setAppTheme;
 window.openScanner = openScanner;
 window.syncWithCloud = syncWithCloud;
 window.pullFromCloud = pullFromCloud;
+window.manualFullSyncRefresh = manualFullSyncRefresh;
