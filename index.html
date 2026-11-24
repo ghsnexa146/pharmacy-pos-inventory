@@ -85,7 +85,6 @@
         <p>Create a new store profile or login to existing terminal</p>
       </div>
 
-      <!-- Mode Switcher: New Store vs Existing Login -->
       <div class="onboarding-tabs">
         <button type="button" class="onb-tab active" id="onb-btn-new" onclick="switchOnboardingMode('new')">
           <i class="fa-solid fa-plus-circle"></i> New Store
@@ -206,7 +205,6 @@
           <label id="login-mobile-label">Administrator Mobile Number *</label>
         </div>
 
-        <!-- 6-Digit PIN Field (Only shown for Administrator Login) -->
         <div class="input-floating mt-2" id="login-pin-wrapper">
           <input type="password" id="login-admin-pin" maxlength="6" inputmode="numeric" placeholder=" " />
           <label>6-Digit Admin Security PIN *</label>
@@ -219,7 +217,6 @@
         </button>
       </div>
 
-      <!-- CLEAN FOOTER ATTRIBUTION -->
       <div class="setup-brand-footer">
         Designed by <strong>D. Hossain</strong>
       </div>
@@ -228,7 +225,6 @@
 
   <!-- 2. MAIN APPLICATION CONTAINER -->
   <div id="main-app" class="screen">
-    <!-- Top Header -->
     <header class="top-bar">
       <div class="store-info">
         <div class="logo-preview-box small">
@@ -305,7 +301,7 @@
           <i class="fa-solid fa-chevron-right"></i>
         </div>
 
-        <!-- PERIOD ANALYTICS FILTER SECTION (ABOVE QUICK OPERATIONS) -->
+        <!-- PERIOD ANALYTICS FILTER SECTION -->
         <div class="analytics-filter-section">
           <div class="section-header" style="margin-bottom: 10px;">
             <h3>Sales & Stock Activity</h3>
@@ -393,9 +389,14 @@
             <h3>Purchase Orders</h3>
             <p>Shortlist medicines for restocking</p>
           </div>
-          <button class="btn-whatsapp sm shadow" onclick="sharePurchaseOrderWA()">
-            <i class="fa-brands fa-whatsapp"></i> Send List
-          </button>
+          <div class="row-join">
+            <button class="btn-secondary sm shadow" onclick="exportPurchaseOrderPDF()" title="Export & Share Order PDF">
+              <i class="fa-solid fa-file-pdf"></i> Send PDF
+            </button>
+            <button class="btn-whatsapp sm shadow" onclick="sharePurchaseOrderWA()" title="Send Text List via WhatsApp">
+              <i class="fa-brands fa-whatsapp"></i> Send List
+            </button>
+          </div>
         </div>
 
         <div class="pro-order-form-card">
@@ -449,7 +450,7 @@
           </div>
         </div>
 
-        <!-- Customer & Item Selector Card -->
+        <!-- Customer & Professional Item Selector Card -->
         <div class="modern-billing-box">
           <div class="billing-cust-strip">
             <div class="input-icon-wrap">
@@ -464,7 +465,25 @@
 
           <div class="billing-add-strip">
             <label class="static-label">1. Select Medicine from Stock</label>
-            <select id="bill-product-select" class="modern-select full-width" onchange="updateSelectedStockHint()"></select>
+            <input type="hidden" id="bill-product-select" value="" />
+
+            <!-- Professional Custom Medicine Selector Trigger -->
+            <button type="button" id="bill-med-picker-btn" class="med-picker-trigger" onclick="openMedicinePickerModal()">
+              <div class="picker-left" id="picker-selected-display">
+                <span class="picker-placeholder">Tap to choose medicine...</span>
+              </div>
+              <i class="fa-solid fa-chevron-down picker-arrow"></i>
+            </button>
+
+            <!-- Live Expired Medicine Warning Banner -->
+            <div id="bill-expired-warning" class="bill-expiry-alert" style="display:none;">
+              <i class="fa-solid fa-triangle-exclamation"></i>
+              <div>
+                <strong>EXPIRED MEDICINE ALERT!</strong>
+                <span id="bill-expired-warning-text">This batch has expired. Do not dispense without verification.</span>
+              </div>
+            </div>
+
             <div id="selected-stock-hint" class="stock-hint-text"></div>
 
             <div class="billing-controls-row mt-2">
@@ -535,7 +554,7 @@
             <p>Live stock packs, units & expiry tracker</p>
           </div>
           <div class="row-join">
-            <button class="btn-whatsapp sm shadow" onclick="exportAllStockPDF()" title="Export Complete Stock List as PDF & Share">
+            <button class="btn-whatsapp sm shadow" onclick="exportAllStockPDF()" title="Export Filtered Stock List as PDF">
               <i class="fa-solid fa-file-pdf"></i> Stock PDF
             </button>
             <button class="btn-primary sm shadow" onclick="openAddStockModal('new')">
@@ -579,10 +598,10 @@
           <p>Tap any section below to expand</p>
         </div>
 
-        <!-- Accordion 1: Business Profile, Admin PIN & Invoice Serial -->
+        <!-- Accordion 1: Business Profile & Invoice Serial (PIN REMOVED FROM HERE) -->
         <div class="accordion-card">
           <button class="accordion-header" onclick="toggleAccordion(this)">
-            <span><i class="fa-solid fa-store text-purple"></i> Business Profile, PIN & Invoice No.</span>
+            <span><i class="fa-solid fa-store text-purple"></i> Business Profile & Invoice No.</span>
             <i class="fa-solid fa-chevron-down arrow"></i>
           </button>
           <div class="accordion-body">
@@ -616,15 +635,9 @@
                 <label>WhatsApp Number</label>
               </div>
             </div>
-            <div class="form-row mt-2">
-              <div class="input-floating">
-                <input type="email" id="edit-email" placeholder=" " />
-                <label>Email Address</label>
-              </div>
-              <div class="input-floating">
-                <input type="password" id="edit-admin-pin" maxlength="6" inputmode="numeric" placeholder=" " />
-                <label>6-Digit Admin PIN</label>
-              </div>
+            <div class="input-floating mt-2">
+              <input type="email" id="edit-email" placeholder=" " />
+              <label>Email Address</label>
             </div>
             <div class="input-floating mt-2">
               <input type="text" id="edit-addr1" placeholder=" " />
@@ -667,7 +680,50 @@
           </div>
         </div>
 
-        <!-- Accordion 2: Staff Access Management -->
+        <!-- Accordion 2: Dedicated Admin Security PIN Change (2-Step Verification) -->
+        <div class="accordion-card">
+          <button class="accordion-header" onclick="toggleAccordion(this)">
+            <span><i class="fa-solid fa-key text-orange"></i> Admin Security PIN</span>
+            <i class="fa-solid fa-chevron-down arrow"></i>
+          </button>
+          <div class="accordion-body">
+            <!-- Step 1: Verify Old PIN -->
+            <div id="pin-step-verify">
+              <p class="section-subtext mb-2">Enter your current 6-Digit Admin Security PIN to proceed:</p>
+              <div class="input-floating">
+                <input type="password" id="verify-old-pin-input" maxlength="6" inputmode="numeric" placeholder=" " />
+                <label>Enter Current 6-Digit PIN *</label>
+              </div>
+              <div id="pin-verify-error" class="error-banner" style="display:none;"></div>
+              <button type="button" class="btn-primary full-width mt-2" onclick="verifyOldAdminPinStep()">
+                Next <i class="fa-solid fa-arrow-right"></i>
+              </button>
+            </div>
+
+            <!-- Step 2: Set New PIN (Hidden until Step 1 succeeds) -->
+            <div id="pin-step-update" style="display:none;">
+              <div class="recovery-info-box" style="margin-top:10px; margin-bottom:10px; padding:9px 12px;">
+                <i class="fa-solid fa-circle-check" style="color:var(--green); font-size:16px;"></i>
+                <p style="font-size:12px;">Current PIN verified! Now enter your new 6-Digit Admin PIN below.</p>
+              </div>
+              <div class="input-floating">
+                <input type="password" id="new-admin-pin-input" maxlength="6" inputmode="numeric" placeholder=" " />
+                <label>New 6-Digit Admin PIN *</label>
+              </div>
+              <div class="input-floating mt-2">
+                <input type="password" id="confirm-admin-pin-input" maxlength="6" inputmode="numeric" placeholder=" " />
+                <label>Confirm New 6-Digit PIN *</label>
+              </div>
+              <div id="pin-update-error" class="error-banner" style="display:none;"></div>
+              <div class="form-row mt-2">
+                <button type="button" class="btn-secondary full-width" onclick="resetAdminPinFlow()">Cancel</button>
+                <button type="button" class="btn-primary full-width shadow" onclick="saveNewAdminPin()">Update PIN</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Accordion 3: Staff Access Management -->
         <div class="accordion-card">
           <button class="accordion-header" onclick="toggleAccordion(this)">
             <span><i class="fa-solid fa-users-gear text-green"></i> Staff Access & Permissions</span>
@@ -692,7 +748,7 @@
           </div>
         </div>
 
-        <!-- Accordion 3: Multi-Device Setup (CLEAN STORE ID & COPY ONLY) -->
+        <!-- Accordion 4: Multi-Device Setup (CLEAN STORE ID & COPY ONLY) -->
         <div class="accordion-card">
           <button class="accordion-header" onclick="toggleAccordion(this)">
             <span><i class="fa-solid fa-id-card text-purple"></i> Store Profile ID</span>
@@ -714,30 +770,57 @@
           </div>
         </div>
 
-        <!-- Accordion 4: Store GHS Cloud Sync (One-Time Setup) -->
+        <!-- Accordion 5: Store GHS Cloud Sync (Password-Protected Edit + Free Pull Latest) -->
         <div class="accordion-card">
           <button class="accordion-header" onclick="toggleAccordion(this)">
             <span><i class="fa-solid fa-cloud text-blue"></i> Store GHS Cloud Sync</span>
             <i class="fa-solid fa-chevron-down arrow"></i>
           </button>
           <div class="accordion-body">
-            <p class="section-subtext mb-2">One-time setup: Link the store's personal GHS Cloud Database. Once saved, it syncs automatically in real-time on all devices:</p>
+            <p class="section-subtext mb-2">Database credentials are locked for safety. You can pull latest cloud data anytime or unlock with Admin PIN to edit:</p>
+
             <div class="input-floating">
-              <input type="url" id="ghs-cloud-url" placeholder=" " />
+              <input type="url" id="ghs-cloud-url" placeholder=" " disabled class="locked-cloud-input" />
               <label>GHS Cloud Database URL *</label>
             </div>
             <div class="input-floating mt-2">
-              <input type="text" id="ghs-cloud-secret" placeholder=" " />
+              <input type="password" id="ghs-cloud-secret" placeholder=" " disabled class="locked-cloud-input" />
               <label>Database Secret / API Key (Optional)</label>
             </div>
-            <div class="form-row mt-2">
-              <button class="btn-secondary full-width" onclick="saveGHSCloudConfig()">Save & Connect</button>
-              <button class="btn-primary full-width" onclick="pullFromCloud(true)"><i class="fa-solid fa-cloud-arrow-down"></i> Pull Latest</button>
+
+            <!-- Locked State Actions -->
+            <div id="cloud-locked-actions" class="form-row mt-2">
+              <button type="button" class="btn-secondary full-width" onclick="openCloudUnlockPrompt()">
+                <i class="fa-solid fa-lock"></i> Edit Database
+              </button>
+              <button type="button" class="btn-primary full-width" onclick="pullFromCloud(true)">
+                <i class="fa-solid fa-cloud-arrow-down"></i> Pull Latest
+              </button>
+            </div>
+
+            <!-- Inline PIN Verification Box for Cloud Edit -->
+            <div id="cloud-pin-verify-box" class="cloud-pin-box" style="display:none;">
+              <label class="static-label">Enter 6-Digit Admin PIN to Unlock Editing</label>
+              <div class="row-join">
+                <input type="password" id="cloud-unlock-pin-input" maxlength="6" inputmode="numeric" placeholder="••••••" class="modern-select flex-grow" style="background:var(--white); font-weight:700; letter-spacing:2px;" />
+                <button type="button" class="btn-primary sm" style="height:40px;" onclick="verifyAndUnlockCloudEdit()">Unlock</button>
+                <button type="button" class="btn-ghost" onclick="cancelCloudUnlock()">Cancel</button>
+              </div>
+            </div>
+
+            <!-- Unlocked State Actions -->
+            <div id="cloud-unlocked-actions" class="form-row mt-2" style="display:none;">
+              <button type="button" class="btn-primary full-width shadow" onclick="saveGHSCloudConfig()">
+                <i class="fa-solid fa-floppy-disk"></i> Save & Lock
+              </button>
+              <button type="button" class="btn-secondary full-width" onclick="lockCloudEditFields()">
+                <i class="fa-solid fa-lock"></i> Cancel
+              </button>
             </div>
           </div>
         </div>
 
-        <!-- Accordion 5: Offline Backup & Restore -->
+        <!-- Accordion 6: Offline Backup & Restore -->
         <div class="accordion-card">
           <button class="accordion-header" onclick="toggleAccordion(this)">
             <span><i class="fa-solid fa-download text-orange"></i> Offline Data Backup & Restore</span>
@@ -753,7 +836,7 @@
           </div>
         </div>
 
-        <!-- Accordion 6: App Theme & Appearance -->
+        <!-- Accordion 7: App Theme & Appearance -->
         <div class="accordion-card">
           <button class="accordion-header" onclick="toggleAccordion(this)">
             <span><i class="fa-solid fa-palette text-blue"></i> App Theme & Appearance</span>
@@ -849,6 +932,24 @@
         <span>More</span>
       </button>
     </nav>
+  </div>
+
+  <!-- PROFESSIONAL BILLING MEDICINE PICKER MODAL -->
+  <div id="med-picker-modal" class="modal">
+    <div class="modal-content shadow">
+      <div class="modal-header">
+        <div>
+          <h3>Select Medicine</h3>
+          <p>Choose batch with live stock & expiry check</p>
+        </div>
+        <button class="close-btn" onclick="closeMedicinePickerModal()">&times;</button>
+      </div>
+      <div class="search-box-container">
+        <i class="fa-solid fa-magnifying-glass"></i>
+        <input type="text" id="med-picker-search" placeholder="Search medicine name, mfg or batch..." onkeyup="renderMedicinePickerList()" />
+      </div>
+      <div id="med-picker-list" class="list-container" style="max-height: 58vh; overflow-y: auto;"></div>
+    </div>
   </div>
 
   <!-- ADD / RESTOCK MEDICINE MODAL -->

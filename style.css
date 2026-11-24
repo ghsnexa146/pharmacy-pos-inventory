@@ -419,6 +419,12 @@ body {
   border-radius: 12px; font-size: 14px; outline: none; background: var(--white);
   transition: border-color 0.2s ease; color: var(--text);
 }
+.locked-cloud-input:disabled {
+  background: var(--surface-alt) !important;
+  color: var(--muted) !important;
+  cursor: not-allowed;
+  opacity: 0.85;
+}
 .readonly-input { background: var(--surface-alt) !important; font-weight: 600; }
 .input-floating input:focus, .input-floating select:focus {
   border-color: var(--primary);
@@ -441,6 +447,15 @@ body {
 }
 .form-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
 .row-join { display: flex; gap: 8px; align-items: center; }
+
+/* Cloud PIN Verify Inline Box */
+.cloud-pin-box {
+  background: var(--primary-light);
+  border: 1px solid #bfdbfe;
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-top: 12px;
+}
 
 /* Top Bar */
 .top-bar {
@@ -691,7 +706,7 @@ html[data-theme="dark"] .alert-text span { color: #fcd34d; }
 .pill.warn.active { background: var(--orange); border-color: var(--orange); color: #fff; }
 .pill.danger.active { background: var(--red); border-color: var(--red); color: #fff; }
 
-/* MODERN PHARMACY BILLING UI */
+/* MODERN PHARMACY BILLING UI & CUSTOM MEDICINE PICKER */
 .modern-billing-box {
   background: var(--white); border-radius: 20px; border: 1px solid var(--border);
   overflow: hidden; margin-bottom: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.03);
@@ -709,7 +724,119 @@ html[data-theme="dark"] .alert-text span { color: #fcd34d; }
   border: none; outline: none; width: 100%; font-size: 13px; color: var(--text); background: transparent;
 }
 .billing-add-strip { padding: 14px; }
-.stock-hint-text { font-size: 11px; color: var(--primary); font-weight: 600; margin-top: 5px; }
+
+/* Professional Medicine Picker Trigger Button */
+.med-picker-trigger {
+  width: 100%;
+  min-height: 48px;
+  background: var(--surface-alt);
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+.med-picker-trigger:hover, .med-picker-trigger:focus {
+  border-color: var(--primary);
+  background: var(--white);
+}
+.med-picker-trigger.is-expired-selected {
+  border-color: var(--red);
+  background: #fef2f2;
+}
+.picker-left {
+  flex: 1;
+  min-width: 0;
+}
+.picker-placeholder {
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.picker-med-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.picker-med-title strong {
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 800;
+}
+.picker-med-sub {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.picker-arrow {
+  color: var(--primary);
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+/* Expired Medicine Warning Banner on Billing */
+.bill-expiry-alert {
+  margin-top: 10px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-left: 4px solid var(--red);
+  border-radius: 11px;
+  padding: 9px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #991b1b;
+}
+.bill-expiry-alert i {
+  font-size: 16px;
+  color: var(--red);
+  flex-shrink: 0;
+}
+.bill-expiry-alert strong {
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+}
+.bill-expiry-alert span {
+  display: block;
+  font-size: 11px;
+  color: #b91c1c;
+}
+
+/* Medicine Picker Modal List Items */
+.picker-item-card {
+  background: var(--surface-alt);
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.picker-item-card:hover {
+  border-color: var(--primary);
+  background: var(--primary-light);
+}
+.picker-item-card.selected {
+  border-color: var(--primary);
+  background: var(--primary-light);
+}
+.picker-item-card.expired-item {
+  border-color: #fecaca;
+  background: #fff5f5;
+}
+
+.stock-hint-text { font-size: 11px; color: var(--primary); font-weight: 600; margin-top: 6px; }
 .billing-controls-row { display: flex; gap: 8px; align-items: flex-end; }
 .modern-select {
   height: 40px; border: 1px solid var(--border); border-radius: 10px;

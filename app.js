@@ -362,9 +362,15 @@ function setupBackNavigationHandler() {
       return;
     }
 
+    const pickerModal = document.getElementById('med-picker-modal');
     const stockModal = document.getElementById('stock-modal');
     const billsModal = document.getElementById('saved-bills-modal');
 
+    if (pickerModal && pickerModal.classList.contains('active')) {
+      closeMedicinePickerModal();
+      window.history.pushState({ appState: 'root' }, '');
+      return;
+    }
     if (stockModal && stockModal.classList.contains('active')) {
       closeAddStockModal();
       window.history.pushState({ appState: 'root' }, '');
@@ -837,9 +843,6 @@ function loadMainApp(profile) {
   document.getElementById('edit-phone').value = profile.phone || '';
   document.getElementById('edit-whatsapp').value = profile.whatsapp || profile.phone || '';
   document.getElementById('edit-email').value = profile.email || '';
-  if (document.getElementById('edit-admin-pin')) {
-    document.getElementById('edit-admin-pin').value = profile.adminPin || '';
-  }
   document.getElementById('edit-addr1').value = profile.addr1 || profile.address || '';
   document.getElementById('edit-addr2').value = profile.addr2 || '';
   document.getElementById('edit-city').value = profile.city || '';
@@ -849,6 +852,8 @@ function loadMainApp(profile) {
   const cloudCfg = JSON.parse(localStorage.getItem(DB_KEYS.CLOUD_CFG) || '{}');
   if (document.getElementById('ghs-cloud-url')) document.getElementById('ghs-cloud-url').value = cloudCfg.url || '';
   if (document.getElementById('ghs-cloud-secret')) document.getElementById('ghs-cloud-secret').value = cloudCfg.secret || '';
+  lockCloudEditFields();
+  resetAdminPinFlow();
 
   renderStaffList();
   updateNextInvPreview();
@@ -933,7 +938,7 @@ function recordStockMovement(medName, packsAdded, unitsAdded, type = 'new') {
   localStorage.setItem(DB_KEYS.STOCK_LOGS, JSON.stringify(logs));
 }
 
-/* ==================== STOCK MANAGEMENT, RESTOCK & ONE-CLICK STOCK PDF ==================== */
+/* ==================== STOCK MANAGEMENT, RESTOCK & FILTERED STOCK PDF ==================== */
 function openAddStockModal(mode = 'new', preselectId = null) {
   document.getElementById('stock-modal').classList.add('active');
   setStockModalMode(mode);
@@ -1069,36 +1074,46 @@ function setStockFilter(filter, btnEl) {
   renderStockList();
 }
 
-function renderStockList() {
-  const container = document.getElementById('stock-list-container');
-  const query = (document.getElementById('stock-search').value || '').toLowerCase();
+function getFilteredStockItems() {
+  const query = (document.getElementById('stock-search')?.value || '').toLowerCase();
   const stockList = JSON.parse(localStorage.getItem(DB_KEYS.STOCK)) || [];
 
-  let countAll = stockList.length, countNew = 0, countSoon = 0, countExpired = 0;
-
-  const categorized = stockList.map(item => {
-    const status = getExpiryStatus(item.expiry);
-    if (status === 'new') countNew++;
-    if (status === 'soon') countSoon++;
-    if (status === 'expired') countExpired++;
-    return { ...item, status };
-  });
+  const categorized = stockList.map(item => ({
+    ...item,
+    status: getExpiryStatus(item.expiry)
+  }));
 
   const priority = { expired: 1, soon: 2, new: 3 };
   categorized.sort((a, b) => priority[a.status] - priority[b.status]);
 
-  document.getElementById('count-all').innerText = countAll;
-  document.getElementById('count-new').innerText = countNew;
-  document.getElementById('count-soon').innerText = countSoon;
-  document.getElementById('count-expired').innerText = countExpired;
-
-  const filtered = categorized.filter(i => {
+  return categorized.filter(i => {
     const matchesSearch = i.name.toLowerCase().includes(query) ||
                           i.batch.toLowerCase().includes(query) ||
                           (i.mfg && i.mfg.toLowerCase().includes(query));
     const matchesTab = currentStockFilter === 'all' || i.status === currentStockFilter;
     return matchesSearch && matchesTab;
   });
+}
+
+function renderStockList() {
+  const container = document.getElementById('stock-list-container');
+  const stockList = JSON.parse(localStorage.getItem(DB_KEYS.STOCK)) || [];
+
+  let countAll = stockList.length, countNew = 0, countSoon = 0, countExpired = 0;
+
+  stockList.forEach(item => {
+    const status = getExpiryStatus(item.expiry);
+    if (status === 'new') countNew++;
+    if (status === 'soon') countSoon++;
+    if (status === 'expired') countExpired++;
+  });
+
+  document.getElementById('count-all').innerText = countAll;
+  document.getElementById('count-new').innerText = countNew;
+  document.getElementById('count-soon').innerText = countSoon;
+  document.getElementById('count-expired').innerText = countExpired;
+
+  const filtered = getFilteredStockItems();
 
   if (filtered.length === 0) {
     container.innerHTML = `<p style="text-align:center; color:#64748b; padding:30px;">No medicines found in this category.</p>`;
@@ -1145,8 +1160,8 @@ function renderStockList() {
   }).join('');
 }
 
-/* ==================== EXPORT COMPLETE STOCK LIST AS PDF & SHARE ==================== */
-function buildStockReportHTML(stockList, profile) {
+/* ==================== EXPORT FILTERED STOCK LIST AS PDF & SHARE ==================== */
+function buildStockReportHTML(stockList, profile, reportTitle = 'COMPLETE STOCK REPORT') {
   const fullAddr = formatFullAddress(profile);
   const dateStr = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   let totalStockMRPVal = 0;
@@ -1200,9 +1215,9 @@ function buildStockReportHTML(stockList, profile) {
           <div style="font-size: 10px; color: #64748b; margin-top: 2px;">Phone: ${profile.phone} ${profile.dlNo ? '• DL: ' + profile.dlNo : ''}</div>
         </div>
         <div style="text-align: right;">
-          <h2 style="margin: 0; font-size: 16px; font-weight: 800; color: #1d4ed8; letter-spacing: 0.5px;">COMPLETE STOCK REPORT</h2>
+          <h2 style="margin: 0; font-size: 15px; font-weight: 800; color: #1d4ed8; letter-spacing: 0.5px;">${reportTitle}</h2>
           <div style="font-size: 11px; font-weight: 700; color: #0f172a; margin-top: 3px;">Date: ${dateStr}</div>
-          <div style="font-size: 10px; color: #475569;">Total Medicines: ${stockList.length}</div>
+          <div style="font-size: 10px; color: #475569;">Listed Items: ${stockList.length}</div>
         </div>
       </div>
 
@@ -1244,13 +1259,29 @@ function buildStockReportHTML(stockList, profile) {
 }
 
 async function exportAllStockPDF() {
-  const stockList = JSON.parse(localStorage.getItem(DB_KEYS.STOCK)) || [];
-  if (stockList.length === 0) {
-    return alert('Inventory is empty. Add medicines first to export Stock PDF.');
+  const filteredList = getFilteredStockItems();
+  if (filteredList.length === 0) {
+    return alert('No medicines found in the selected filter tab to export.');
   }
 
+  const titleMap = {
+    all: 'COMPLETE STOCK REPORT',
+    new: 'VALID MEDICINES STOCK REPORT',
+    soon: 'EXPIRING SOON STOCK REPORT',
+    expired: 'EXPIRED MEDICINES REPORT'
+  };
+  const tagMap = {
+    all: 'All_Stock',
+    new: 'Valid_Stock',
+    soon: 'Expiring_Soon',
+    expired: 'Expired_Stock'
+  };
+
+  const reportTitle = titleMap[currentStockFilter] || 'STOCK REPORT';
+  const filterTag = tagMap[currentStockFilter] || 'Stock';
+
   const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || { bizName: 'Pharmacy' };
-  const htmlString = buildStockReportHTML(stockList, profile);
+  const htmlString = buildStockReportHTML(filteredList, profile, reportTitle);
 
   const tempDiv = document.createElement('div');
   tempDiv.innerHTML = htmlString;
@@ -1258,7 +1289,7 @@ async function exportAllStockPDF() {
 
   const dateTag = new Date().toISOString().slice(0, 10);
   const cleanStoreName = (profile.bizName || 'Store').replace(/[^a-zA-Z0-9]/g, '_');
-  const fileName = `Stock_Report_${cleanStoreName}_${dateTag}.pdf`;
+  const fileName = `${filterTag}_${cleanStoreName}_${dateTag}.pdf`;
 
   const opt = {
     margin: 5,
@@ -1271,7 +1302,7 @@ async function exportAllStockPDF() {
   try {
     if (typeof html2pdf !== 'undefined') {
       if (window.AndroidBridge && typeof window.AndroidBridge.sharePdfBase64 === 'function') {
-        showToast('Generating Complete Stock PDF...');
+        showToast(`Generating ${reportTitle}...`);
         const pdfDataUri = await html2pdf().set(opt).from(tempDiv).outputPdf('datauristring');
         window.AndroidBridge.sharePdfBase64(pdfDataUri, fileName, '');
       } else {
@@ -1281,12 +1312,12 @@ async function exportAllStockPDF() {
         if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
           await navigator.share({
             files: [pdfFile],
-            title: `Complete Stock Report - ${profile.bizName}`,
-            text: `Complete Medicine Stock Report (${stockList.length} Items) - ${profile.bizName}`
+            title: `${reportTitle} - ${profile.bizName}`,
+            text: `${reportTitle} (${filteredList.length} Items) - ${profile.bizName}`
           });
         } else {
           await html2pdf().set(opt).from(tempDiv).save();
-          showToast('Complete Stock PDF Downloaded!');
+          showToast(`${reportTitle} Downloaded!`);
         }
       }
     } else {
@@ -1300,7 +1331,7 @@ async function exportAllStockPDF() {
   }
 }
 
-/* ==================== ORDERS (MEDICINE REORDER LIST) ==================== */
+/* ==================== ORDERS (MEDICINE REORDER LIST + PDF EXPORT) ==================== */
 function quickAddToOrder(medName, mfgName) {
   switchTab('orders');
   document.getElementById('order-med-name').value = medName;
@@ -1384,7 +1415,112 @@ function sharePurchaseOrderWA() {
   window.open(`https://wa.me/?text=${msg}`, '_blank');
 }
 
-/* ==================== ACCURATE PHARMACY BILLING ==================== */
+function buildPurchaseOrderHTML(orders, profile) {
+  const fullAddr = formatFullAddress(profile);
+  const dateStr = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+
+  const rowsHtml = orders.map((o, idx) => `
+    <tr style="border-bottom: 1px solid #e2e8f0;">
+      <td style="padding: 8px 6px; font-size: 11px; color: #475569;">${idx + 1}</td>
+      <td style="padding: 8px 6px; font-size: 12px; color: #0f172a;"><strong>${o.name}</strong></td>
+      <td style="padding: 8px 6px; font-size: 11px; color: #334155;">${o.mfg || 'Any'}</td>
+      <td style="padding: 8px 6px; font-size: 11px; color: #334155;">${o.supplier || 'General Agency'}</td>
+      <td style="padding: 8px 6px; font-size: 12px; text-align: right; font-weight: 800; color: #1d4ed8;">${o.qty}</td>
+    </tr>
+  `).join('');
+
+  return `
+    <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #1e293b; padding: 16px 18px; width: 100%; max-width: 190mm; margin: 0 auto; background: #ffffff; box-sizing: border-box;">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #1d4ed8; padding-bottom: 12px; margin-bottom: 14px;">
+        <div>
+          <div style="font-size: 18px; font-weight: 800; color: #0f172a; text-transform: uppercase;">${profile.bizName}</div>
+          <div style="font-size: 10px; color: #475569; margin-top: 2px;">${fullAddr}</div>
+          <div style="font-size: 10px; color: #64748b; margin-top: 2px;">Phone: ${profile.phone} ${profile.dlNo ? '• DL: ' + profile.dlNo : ''}</div>
+        </div>
+        <div style="text-align: right;">
+          <h2 style="margin: 0; font-size: 17px; font-weight: 800; color: #1d4ed8; letter-spacing: 0.5px;">PURCHASE ORDER</h2>
+          <div style="font-size: 11px; font-weight: 700; color: #0f172a; margin-top: 3px;">Date: ${dateStr}</div>
+          <div style="font-size: 10px; color: #475569;">Total Items: ${orders.length}</div>
+        </div>
+      </div>
+
+      <table style="width: 100%; border-collapse: collapse; margin-bottom: 18px;">
+        <thead>
+          <tr style="background: #f1f5f9; border-top: 1.5px solid #94a3b8; border-bottom: 1.5px solid #94a3b8;">
+            <th style="padding: 8px 6px; text-align: left; font-size: 10px; font-weight: 800; color: #334155;">#</th>
+            <th style="padding: 8px 6px; text-align: left; font-size: 10px; font-weight: 800; color: #334155;">MEDICINE NAME</th>
+            <th style="padding: 8px 6px; text-align: left; font-size: 10px; font-weight: 800; color: #334155;">COMPANY / MFG</th>
+            <th style="padding: 8px 6px; text-align: left; font-size: 10px; font-weight: 800; color: #334155;">AGENCY / SUPPLIER</th>
+            <th style="padding: 8px 6px; text-align: right; font-size: 10px; font-weight: 800; color: #334155;">ORDER QTY</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+
+      <div style="border-top: 1px solid #cbd5e1; padding-top: 10px; display: flex; justify-content: space-between; font-size: 10px; color: #64748b;">
+        <span>Please confirm stock availability & billing rate.</span>
+        <span>Authorized Order • <strong>${profile.bizName}</strong></span>
+      </div>
+    </div>
+  `;
+}
+
+async function exportPurchaseOrderPDF() {
+  const orders = JSON.parse(localStorage.getItem(DB_KEYS.ORDERS)) || [];
+  if (orders.length === 0) return alert('Order list is empty.');
+
+  const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || { bizName: 'Pharmacy' };
+  const htmlString = buildPurchaseOrderHTML(orders, profile);
+
+  const tempDiv = document.createElement('div');
+  tempDiv.innerHTML = htmlString;
+  document.body.appendChild(tempDiv);
+
+  const dateTag = new Date().toISOString().slice(0, 10);
+  const cleanStoreName = (profile.bizName || 'Store').replace(/[^a-zA-Z0-9]/g, '_');
+  const fileName = `Purchase_Order_${cleanStoreName}_${dateTag}.pdf`;
+
+  const opt = {
+    margin: 5,
+    filename: fileName,
+    image: { type: 'jpeg', quality: 0.98 },
+    html2canvas: { scale: 2, useCORS: true },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+  };
+
+  try {
+    if (typeof html2pdf !== 'undefined') {
+      if (window.AndroidBridge && typeof window.AndroidBridge.sharePdfBase64 === 'function') {
+        showToast('Generating Purchase Order PDF...');
+        const pdfDataUri = await html2pdf().set(opt).from(tempDiv).outputPdf('datauristring');
+        window.AndroidBridge.sharePdfBase64(pdfDataUri, fileName, '');
+      } else {
+        const pdfBlob = await html2pdf().set(opt).from(tempDiv).outputPdf('blob');
+        const pdfFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
+
+        if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+          await navigator.share({
+            files: [pdfFile],
+            title: `Purchase Order - ${profile.bizName}`,
+            text: `Purchase Order (${orders.length} Items) - ${profile.bizName}`
+          });
+        } else {
+          await html2pdf().set(opt).from(tempDiv).save();
+          showToast('Purchase Order PDF Downloaded!');
+        }
+      }
+    } else {
+      window.print();
+    }
+  } catch (err) {
+    console.error('Order PDF Error:', err);
+    showToast('Unable to generate Order PDF.');
+  } finally {
+    document.body.removeChild(tempDiv);
+  }
+}
+
+/* ==================== PROFESSIONAL BILLING & LIVE EXPIRY WARNING ==================== */
 function adjustBillQty(delta) {
   const input = document.getElementById('bill-qty');
   let val = parseInt(input.value) || 1;
@@ -1393,17 +1529,101 @@ function adjustBillQty(delta) {
 }
 
 function populateBillingDropdown() {
-  const select = document.getElementById('bill-product-select');
+  const hiddenInput = document.getElementById('bill-product-select');
   const stockList = JSON.parse(localStorage.getItem(DB_KEYS.STOCK)) || [];
-  select.innerHTML = stockList.length
-    ? stockList.map(i => {
-        const totalUnits = i.totalUnits !== undefined ? i.totalUnits : (i.packs * i.unitPerPack);
-        const availPacks = Math.floor(totalUnits / i.unitPerPack);
-        const st = getExpiryStatus(i.expiry);
-        const tag = st === 'expired' ? ' [EXPIRED]' : (totalUnits <= 0 ? ' [OUT OF STOCK]' : '');
-        return `<option value="${i.id}">${i.name} (${i.batch} | ₹${i.mrp}/Pack | Stock: ${availPacks}P)${tag}</option>`;
-      }).join('')
-    : `<option value="">No Stock Available</option>`;
+
+  if (stockList.length === 0) {
+    if (hiddenInput) hiddenInput.value = '';
+    updateSelectedStockHint();
+    return;
+  }
+
+  const currentVal = parseInt(hiddenInput.value);
+  const exists = stockList.some(i => i.id === currentVal);
+  if (!exists) {
+    const firstValid = stockList.find(i => getExpiryStatus(i.expiry) !== 'expired' && ((i.totalUnits ?? (i.packs * i.unitPerPack)) > 0));
+    hiddenInput.value = firstValid ? firstValid.id : stockList[0].id;
+  }
+  updateSelectedStockHint();
+}
+
+function openMedicinePickerModal() {
+  const stockList = JSON.parse(localStorage.getItem(DB_KEYS.STOCK)) || [];
+  if (stockList.length === 0) {
+    return alert('Inventory is empty! Please add medicine stock first.');
+  }
+  document.getElementById('med-picker-modal').classList.add('active');
+  const searchEl = document.getElementById('med-picker-search');
+  if (searchEl) {
+    searchEl.value = '';
+  }
+  renderMedicinePickerList();
+}
+
+function closeMedicinePickerModal() {
+  document.getElementById('med-picker-modal').classList.remove('active');
+}
+
+function renderMedicinePickerList() {
+  const container = document.getElementById('med-picker-list');
+  const query = (document.getElementById('med-picker-search')?.value || '').toLowerCase();
+  const stockList = JSON.parse(localStorage.getItem(DB_KEYS.STOCK)) || [];
+  const selectedId = parseInt(document.getElementById('bill-product-select').value);
+
+  const filtered = stockList.filter(i =>
+    i.name.toLowerCase().includes(query) ||
+    i.batch.toLowerCase().includes(query) ||
+    (i.mfg && i.mfg.toLowerCase().includes(query))
+  );
+
+  if (filtered.length === 0) {
+    container.innerHTML = `<p style="text-align:center; color:#64748b; padding:24px;">No matching medicines found.</p>`;
+    return;
+  }
+
+  container.innerHTML = filtered.map(item => {
+    const totalUnits = item.totalUnits !== undefined ? item.totalUnits : (item.packs * item.unitPerPack);
+    const fullPacks = Math.floor(totalUnits / item.unitPerPack);
+    const looseUnits = totalUnits % item.unitPerPack;
+    const st = getExpiryStatus(item.expiry);
+
+    let badgeHtml = `<span class="status-badge badge-valid" style="margin-top:0;">Valid</span>`;
+    if (st === 'soon') badgeHtml = `<span class="status-badge badge-soon" style="margin-top:0;">Expiring Soon</span>`;
+    if (st === 'expired') badgeHtml = `<span class="status-badge badge-expired" style="margin-top:0;">Expired</span>`;
+
+    let stockLabel = `${fullPacks} Packs`;
+    if (looseUnits > 0) stockLabel += ` + ${looseUnits} Pcs`;
+    if (totalUnits <= 0) stockLabel = `Out of Stock`;
+
+    const isSelected = item.id === selectedId;
+    const cardClasses = `picker-item-card ${isSelected ? 'selected' : ''} ${st === 'expired' ? 'expired-item' : ''}`;
+
+    return `
+      <div class="${cardClasses}" onclick="selectMedicineForBilling(${item.id})">
+        <div style="flex:1; min-width:0;">
+          <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+            <strong style="font-size:14px; color:var(--text);">${item.name}</strong>
+            ${badgeHtml}
+          </div>
+          <div style="font-size:11px; color:var(--muted); margin-top:3px;">
+            Mfg: <b>${item.mfg || 'N/A'}</b> • Batch: <b>${item.batch}</b> • Exp: <b>${item.expiry}</b>
+          </div>
+          <div style="font-size:11px; font-weight:700; color:${totalUnits <= 0 ? 'var(--red)' : 'var(--primary)'}; margin-top:3px;">
+            Stock: ${stockLabel} (${totalUnits} Pcs)
+          </div>
+        </div>
+        <div style="text-align:right; flex-shrink:0;">
+          <strong style="font-size:15px; color:var(--text);">₹${item.mrp.toFixed(2)}</strong>
+          <div style="font-size:10px; color:var(--muted);">Per Pack</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function selectMedicineForBilling(itemId) {
+  document.getElementById('bill-product-select').value = itemId;
+  closeMedicinePickerModal();
   updateSelectedStockHint();
 }
 
@@ -1411,13 +1631,56 @@ function updateSelectedStockHint() {
   const itemId = parseInt(document.getElementById('bill-product-select').value);
   const stockList = JSON.parse(localStorage.getItem(DB_KEYS.STOCK)) || [];
   const p = stockList.find(i => i.id === itemId);
+
   const hintEl = document.getElementById('selected-stock-hint');
+  const displayBox = document.getElementById('picker-selected-display');
+  const triggerBtn = document.getElementById('bill-med-picker-btn');
+  const expWarnBox = document.getElementById('bill-expired-warning');
+  const expWarnText = document.getElementById('bill-expired-warning-text');
+
   if (!p) {
     hintEl.innerText = '';
+    if (displayBox) displayBox.innerHTML = `<span class="picker-placeholder">No stock available. Add medicines first.</span>`;
+    if (triggerBtn) triggerBtn.classList.remove('is-expired-selected');
+    if (expWarnBox) expWarnBox.style.display = 'none';
     return;
   }
+
   const totalUnits = p.totalUnits !== undefined ? p.totalUnits : (p.packs * p.unitPerPack);
+  const availPacks = Math.floor(totalUnits / p.unitPerPack);
   const unitPrice = (p.mrp / p.unitPerPack).toFixed(2);
+  const st = getExpiryStatus(p.expiry);
+
+  let statusPill = `<span class="status-badge badge-valid" style="margin-top:0; font-size:9px; padding:2px 6px;">Exp: ${p.expiry}</span>`;
+  if (st === 'soon') {
+    statusPill = `<span class="status-badge badge-soon" style="margin-top:0; font-size:9px; padding:2px 6px;">Expiring: ${p.expiry}</span>`;
+  } else if (st === 'expired') {
+    statusPill = `<span class="status-badge badge-expired" style="margin-top:0; font-size:9px; padding:2px 6px;">EXPIRED (${p.expiry})</span>`;
+  }
+
+  if (displayBox) {
+    displayBox.innerHTML = `
+      <div class="picker-med-title">
+        <strong>${p.name}</strong>
+        ${statusPill}
+      </div>
+      <div class="picker-med-sub">
+        Batch: <b>${p.batch}</b> • ₹${p.mrp}/Pack • Stock: <b>${availPacks} Packs</b> (${totalUnits} Pcs)
+      </div>
+    `;
+  }
+
+  if (st === 'expired') {
+    if (triggerBtn) triggerBtn.classList.add('is-expired-selected');
+    if (expWarnBox) {
+      expWarnBox.style.display = 'flex';
+      expWarnText.innerText = `"${p.name}" (Batch: ${p.batch}) expired on ${p.expiry}! Please check before adding to bill.`;
+    }
+  } else {
+    if (triggerBtn) triggerBtn.classList.remove('is-expired-selected');
+    if (expWarnBox) expWarnBox.style.display = 'none';
+  }
+
   hintEl.innerText = `In Stock: ${totalUnits} Pcs (${p.unitPerPack} Pcs/Pack) • Pack MRP: ₹${p.mrp} | 1 Pc: ₹${unitPrice}`;
 }
 
@@ -1429,7 +1692,7 @@ function addToBill() {
   const stockList = JSON.parse(localStorage.getItem(DB_KEYS.STOCK)) || [];
   const product = stockList.find(i => i.id === itemId);
 
-  if (!product) return alert('Please add stock first.');
+  if (!product) return alert('Please select a medicine from stock first.');
 
   const totalUnitsAvail = product.totalUnits !== undefined ? product.totalUnits : (product.packs * product.unitPerPack);
   const unitsNeeded = unitType === 'pack' ? (qty * product.unitPerPack) : qty;
@@ -1439,7 +1702,8 @@ function addToBill() {
   }
 
   if (getExpiryStatus(product.expiry) === 'expired') {
-    if (!confirm('Warning: This medicine batch is EXPIRED. Still add to bill?')) return;
+    const proceed = confirm(`⚠️ EXPIRED MEDICINE WARNING!\n\nMedicine: ${product.name}\nBatch: ${product.batch}\nExpired On: ${product.expiry}\n\nThis medicine batch is EXPIRED. Are you sure you still want to add it to the customer bill?`);
+    if (!proceed) return;
   }
 
   const rateApplied = unitType === 'pack' ? product.mrp : (product.mrp / product.unitPerPack);
@@ -1875,7 +2139,6 @@ function renderPeriodAnalytics() {
   const stockLogs = JSON.parse(localStorage.getItem(DB_KEYS.STOCK_LOGS)) || [];
   const stockList = JSON.parse(localStorage.getItem(DB_KEYS.STOCK)) || [];
 
-  // 1. Filter Sales & Stock Out
   let periodSalesTotal = 0;
   let periodBillsCount = 0;
   let periodPacksOut = 0;
@@ -1900,7 +2163,6 @@ function renderPeriodAnalytics() {
     }
   });
 
-  // 2. Filter Stock Added (Logs + Legacy Initial Stock fallback)
   let periodPacksIn = 0;
   let periodStockEntries = 0;
 
@@ -1977,14 +2239,9 @@ function refreshDashboard() {
   renderPeriodAnalytics();
 }
 
+/* ==================== BUSINESS PROFILE & 2-STEP ADMIN PIN CHANGE ==================== */
 async function updateBusinessProfile() {
   const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
-  const newAdminPin = document.getElementById('edit-admin-pin').value.trim();
-
-  if (newAdminPin && !/^\d{6}$/.test(newAdminPin)) {
-    alert('Admin PIN must be exactly 6 numeric digits.');
-    return;
-  }
 
   profile.bizName = document.getElementById('edit-biz-name').value.trim();
   profile.ownerName = document.getElementById('edit-owner-name').value.trim();
@@ -1993,7 +2250,6 @@ async function updateBusinessProfile() {
   profile.phone = document.getElementById('edit-phone').value.trim();
   profile.whatsapp = document.getElementById('edit-whatsapp').value.trim();
   profile.email = document.getElementById('edit-email').value.trim();
-  if (newAdminPin) profile.adminPin = newAdminPin;
   profile.addr1 = document.getElementById('edit-addr1').value.trim();
   profile.addr2 = document.getElementById('edit-addr2').value.trim();
   profile.city = document.getElementById('edit-city').value.trim();
@@ -2008,10 +2264,128 @@ async function updateBusinessProfile() {
 
   localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(profile));
   loadMainApp(profile);
-  showToast('Business profile & PIN updated!');
+  showToast('Business profile updated!');
 
   await syncStoreMetadataToCentral(profile);
   syncWithCloud(false);
+}
+
+function verifyOldAdminPinStep() {
+  const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
+  const enteredOldPin = (document.getElementById('verify-old-pin-input')?.value || '').trim();
+  const errEl = document.getElementById('pin-verify-error');
+  errEl.style.display = 'none';
+
+  if (!enteredOldPin) {
+    errEl.innerText = 'Please enter your current 6-Digit Admin PIN.';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  if (profile.adminPin && enteredOldPin !== profile.adminPin) {
+    errEl.innerText = 'Incorrect current Admin PIN! Please try again.';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  document.getElementById('pin-step-verify').style.display = 'none';
+  document.getElementById('pin-step-update').style.display = 'block';
+  document.getElementById('new-admin-pin-input').value = '';
+  document.getElementById('confirm-admin-pin-input').value = '';
+  document.getElementById('new-admin-pin-input').focus();
+}
+
+function resetAdminPinFlow() {
+  const verifyBox = document.getElementById('pin-step-verify');
+  const updateBox = document.getElementById('pin-step-update');
+  const oldInput = document.getElementById('verify-old-pin-input');
+  const err1 = document.getElementById('pin-verify-error');
+  const err2 = document.getElementById('pin-update-error');
+
+  if (verifyBox) verifyBox.style.display = 'block';
+  if (updateBox) updateBox.style.display = 'none';
+  if (oldInput) oldInput.value = '';
+  if (err1) err1.style.display = 'none';
+  if (err2) err2.style.display = 'none';
+}
+
+async function saveNewAdminPin() {
+  const newPin = (document.getElementById('new-admin-pin-input')?.value || '').trim();
+  const confirmPin = (document.getElementById('confirm-admin-pin-input')?.value || '').trim();
+  const errEl = document.getElementById('pin-update-error');
+  errEl.style.display = 'none';
+
+  if (!/^\d{6}$/.test(newPin)) {
+    errEl.innerText = 'New Admin PIN must be exactly 6 numeric digits.';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (newPin !== confirmPin) {
+    errEl.innerText = 'New PIN and Confirm PIN do not match!';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
+  profile.adminPin = newPin;
+  localStorage.setItem(DB_KEYS.PROFILE, JSON.stringify(profile));
+
+  resetAdminPinFlow();
+  showToast('Admin Security PIN updated successfully!');
+
+  await syncStoreMetadataToCentral(profile);
+  syncWithCloud(false);
+}
+
+/* ==================== PASSWORD-PROTECTED STORE GHS CLOUD SYNC ==================== */
+function openCloudUnlockPrompt() {
+  document.getElementById('cloud-locked-actions').style.display = 'none';
+  document.getElementById('cloud-pin-verify-box').style.display = 'block';
+  const pinInput = document.getElementById('cloud-unlock-pin-input');
+  if (pinInput) {
+    pinInput.value = '';
+    pinInput.focus();
+  }
+}
+
+function cancelCloudUnlock() {
+  document.getElementById('cloud-pin-verify-box').style.display = 'none';
+  document.getElementById('cloud-locked-actions').style.display = 'grid';
+}
+
+function verifyAndUnlockCloudEdit() {
+  const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
+  const enteredPin = (document.getElementById('cloud-unlock-pin-input')?.value || '').trim();
+
+  if (profile.adminPin && enteredPin !== profile.adminPin) {
+    showToast('Incorrect 6-Digit Admin PIN!');
+    return;
+  }
+
+  const urlInput = document.getElementById('ghs-cloud-url');
+  const secretInput = document.getElementById('ghs-cloud-secret');
+  if (urlInput) urlInput.disabled = false;
+  if (secretInput) secretInput.disabled = false;
+
+  document.getElementById('cloud-pin-verify-box').style.display = 'none';
+  document.getElementById('cloud-locked-actions').style.display = 'none';
+  document.getElementById('cloud-unlocked-actions').style.display = 'grid';
+  showToast('Database settings unlocked for editing.');
+}
+
+function lockCloudEditFields() {
+  const urlInput = document.getElementById('ghs-cloud-url');
+  const secretInput = document.getElementById('ghs-cloud-secret');
+  if (urlInput) urlInput.disabled = true;
+  if (secretInput) secretInput.disabled = true;
+
+  const pinBox = document.getElementById('cloud-pin-verify-box');
+  const unlockedAct = document.getElementById('cloud-unlocked-actions');
+  const lockedAct = document.getElementById('cloud-locked-actions');
+
+  if (pinBox) pinBox.style.display = 'none';
+  if (unlockedAct) unlockedAct.style.display = 'none';
+  if (lockedAct) lockedAct.style.display = 'grid';
 }
 
 async function saveGHSCloudConfig() {
@@ -2019,10 +2393,12 @@ async function saveGHSCloudConfig() {
   const secret = document.getElementById('ghs-cloud-secret').value.trim();
   localStorage.setItem(DB_KEYS.CLOUD_CFG, JSON.stringify({ url, secret }));
 
+  lockCloudEditFields();
+
   const profile = JSON.parse(localStorage.getItem(DB_KEYS.PROFILE)) || {};
   await syncStoreMetadataToCentral(profile);
 
-  showToast('GHS Cloud saved & auto-linked for all logins!');
+  showToast('GHS Cloud saved & locked!');
   if (url) syncWithCloud(true);
 }
 
@@ -2241,7 +2617,12 @@ window.addMedicineOrder = addMedicineOrder;
 window.deleteOrderItem = deleteOrderItem;
 window.clearAllOrders = clearAllOrders;
 window.sharePurchaseOrderWA = sharePurchaseOrderWA;
+window.exportPurchaseOrderPDF = exportPurchaseOrderPDF;
 window.adjustBillQty = adjustBillQty;
+window.openMedicinePickerModal = openMedicinePickerModal;
+window.closeMedicinePickerModal = closeMedicinePickerModal;
+window.renderMedicinePickerList = renderMedicinePickerList;
+window.selectMedicineForBilling = selectMedicineForBilling;
 window.updateSelectedStockHint = updateSelectedStockHint;
 window.addToBill = addToBill;
 window.renderBillCart = renderBillCart;
@@ -2254,6 +2635,13 @@ window.renderSavedBillsList = renderSavedBillsList;
 window.reprintSavedBill = reprintSavedBill;
 window.shareSavedBillPDF = shareSavedBillPDF;
 window.updateBusinessProfile = updateBusinessProfile;
+window.verifyOldAdminPinStep = verifyOldAdminPinStep;
+window.resetAdminPinFlow = resetAdminPinFlow;
+window.saveNewAdminPin = saveNewAdminPin;
+window.openCloudUnlockPrompt = openCloudUnlockPrompt;
+window.cancelCloudUnlock = cancelCloudUnlock;
+window.verifyAndUnlockCloudEdit = verifyAndUnlockCloudEdit;
+window.lockCloudEditFields = lockCloudEditFields;
 window.addAuthorizedStaff = addAuthorizedStaff;
 window.removeStaffMember = removeStaffMember;
 window.copyProfileCode = copyProfileCode;
